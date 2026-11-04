@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070b16">
+<title>局域网互传</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">⇄</div>
+      <div>
+        <h1>局域网互传</h1>
+        <p class="sub" id="deviceInfo">正在连接…</p>
+      </div>
+    </div>
+    <button id="refreshBtn" class="icon-btn" title="刷新列表" aria-label="刷新列表">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>
+      </svg>
+    </button>
+  </header>
+
+  <section class="hero">
+    <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="选择文件上传">
+      <div class="dz-icon">
+        <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 16V4"/><path d="M7.5 8.5 12 4l4.5 4.5"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13A1.5 1.5 0 0 0 20 18.5V15"/>
+        </svg>
+      </div>
+      <h2>发送文件到这台设备</h2>
+      <p>点击选择文件，或把文件拖到这里</p>
+      <span class="primary">选择文件</span>
+      <input type="file" id="fileInput" multiple hidden>
+    </div>
+    <p class="hint">手机与电脑连接同一个 Wi-Fi · 数据仅在局域网内直传，不经过外网</p>
+  </section>
+
+  <section class="uploads" id="uploadPanel" hidden>
+    <div class="section-head">
+      <h2>正在传输</h2>
+    </div>
+    <div id="uploadList" class="upload-list"></div>
+  </section>
+
+  <section class="files">
+    <div class="section-head">
+      <h2>可下载文件 <span class="count" id="fileCount">0</span></h2>
+      <input id="search" class="search" type="search" placeholder="搜索文件" autocomplete="off">
+    </div>
+    <div id="fileList" class="file-list"></div>
+    <div id="emptyState" class="empty">
+      <div class="empty-icon">
+        <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>
+        </svg>
+      </div>
+      <p>还没有文件</p>
+      <span>上传的文件会出现在这里，供所有设备下载</span>
+    </div>
+  </section>
+
+  <section class="card connect" id="connectCard" hidden>
+    <div class="connect-head">
+      <div>
+        <h2>手机扫码直连</h2>
+        <p class="share-url" id="shareUrl">—</p>
+      </div>
+      <button id="toggleQr" class="ghost" type="button">展开</button>
+    </div>
+    <div class="qr-wrap" id="qrWrap" hidden>
+      <div class="qr-box" id="qr"></div>
+      <div class="qr-side">
+        <p>用手机相机或浏览器扫码，<br>即可打开同一个互传页面。</p>
+        <button id="copyBtn" class="ghost" type="button">复制链接</button>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span id="storageInfo">保存目录加载中…</span>
+  </footer>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="/static/qrcode.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

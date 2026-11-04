@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="#0f1425">
+
+    <!-- 连接设置区 -->
+    <LinearLayout
+        android:id="@+id/connectLayout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#1a1f36"
+        android:padding="12dp"
+        android:layout_marginBottom="10dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="连接服务器"
+            android:textColor="#eaf0ff"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <EditText
+            android:id="@+id/etUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="https://电脑IP:8765"
+            android:textColorHint="#6b7a99"
+            android:textColor="#eaf0ff"
+            android:background="#232a44"
+            android:padding="10dp"
+            android:textSize="14sp"
+            android:inputType="textUri" />
+
+        <EditText
+            android:id="@+id/etToken"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="口令 token（?k= 后面的部分）"
+            android:textColorHint="#6b7a99"
+            android:textColor="#eaf0ff"
+            android:background="#232a44"
+            android:padding="10dp"
+            android:textSize="14sp"
+            android:layout_marginTop="6dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="10dp">
+
+            <Button
+                android:id="@+id/btnConnect"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="连接"
+                android:textColor="#ffffff"
+                android:backgroundTint="#5b8cff" />
+
+            <Button
+                android:id="@+id/btnUpload"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="上传文件"
+                android:textColor="#ffffff"
+                android:backgroundTint="#31d6b0"
+                android:layout_marginStart="8dp" />
+        </LinearLayout>
+
+        <!-- 辅助功能行：扫码 + 已下载 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="6dp">
+
+            <Button
+                android:id="@+id/btnScan"
+                style="?attr/borderlessButtonStyle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="📷 扫码"
+                android:textColor="#5b8cff"
+                android:textSize="13sp"
+                android:paddingVertical="4dp" />
+
+            <Button
+                android:id="@+id/btnOpenDownloads"
+                style="?attr/borderlessButtonStyle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="📁 已下载"
+                android:textColor="#5b8cff"
+                android:textSize="13sp"
+                android:paddingVertical="4dp"
+                android:layout_marginStart="8dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 信息条 -->
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="未连接"
+        android:textColor="#93a0c4"
+        android:textSize="13sp"
+        android:gravity="center"
+        android:layout_marginBottom="6dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="8dp">
+
+        <TextView
+            android:id="@+id/tvInfo"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text=""
+            android:textColor="#31d6b0"
+            android:textSize="11sp"
+            android:gravity="start" />
+    </LinearLayout>
+
+    <!-- 文件列表 -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvFiles"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#1a1f36"
+        android:clipToPadding="false"
+        android:padding="4dp" />
+
+    <!-- 空状态提示 -->
+    <TextView
+        android:id="@+id/tvEmpty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text='暂无文件，点击上方"上传文件"添加'
+        android:textColor="#6b7a99"
+        android:textSize="13sp"
+        android:gravity="center"
+        android:padding="30dp"
+        android:visibility="gone" />
+
+</LinearLayout>

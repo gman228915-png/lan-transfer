@@ -1,0 +1,41 @@
+# Android SDK / JDK / Gradle（本地工具链，不提交）
+android-sdk/
+jdk17/
+jdk17.zip
+gradle/
+.gradle/
+
+# 构建输出
+build/
+app/build/
+*.apk
+*.exe
+*.aab
+
+# 密钥与证书（敏感信息）
+*.keystore
+*.jks
+keystore-credentials.txt
+*-credentials.txt
+
+# 证书目录（包含私钥）
+mtls/
+*.pem
+*.key
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 系统文件
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# 临时文件
+*.tmp
+*.log
+__pycache__/
+*.pyc
+node_modules/
