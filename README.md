@@ -1,119 +1,170 @@
 # 局域网互传（LAN Transfer）
 
-一款**局域网内**双向传文件的小工具：电脑上双击 exe 启动服务，手机和电脑连同一个 Wi-Fi，
-手机扫码（或用浏览器打开链接）即可互传文件，不经过外网、不需要登录账号。
+电脑上双击一个 exe 就能在局域网里开一个文件共享服务：手机和电脑连同一个 Wi-Fi，
+扫码或输入地址即可双向传文件，**不经过外网、不需要账号、不用数据线**。
 
-- 电脑 → 手机：在电脑端把文件加入「发布文件」，手机列表里点击「下载」
-- 手机 → 电脑：手机端点「上传」选择文件，文件落到电脑的「接收文件」目录
-- 手机 ↔ 手机：任意一台手机上传后，其他手机都能从列表里下载
-- 免权限：手机端下载到 App 专属目录，不需要存储权限；需要导出时用系统的「另存/分享」
+**当前版本：v1.3.1（2026-11-05）** ｜ [更新记录](CHANGELOG.md) ｜ [HTTP 接口文档](docs/api.md) ｜ [GitHub 仓库](https://github.com/gman228915-png/lan-transfer)
 
-当前版本：**v1.3.1**，变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+## 功能一览
 
-## 交付文件（release 目录）
+| 模块 | 能做什么 | 能力边界 |
+|---|---|---|
+| 桌面 GUI（Windows） | 双击 exe 自动启动服务；展示 IP、端口、口令、链接和二维码；发布文件、查看手机上传的文件 | 只监听当前局域网 IP；每次启动重新生成 10 位随机口令；端口写死请求 8765，被占用会自动顺延 |
+| 网页端（内置） | 用浏览器访问电脑，上传（点击或拖拽、多选、进度、失败重试）、下载、删除，右上角可切换空间 | 免安装；首次访问需手动信任自签名 HTTPS 证书；不能浏览空间目录下的子目录 |
+| 安卓端（APK） | 扫码或手输地址+口令连接；列出所有空间的文件；多文件上传；下载到 App 专属目录；已下载文件可打开/分享/另存/删除 | 固定使用默认空间上传（inbox），暂不支持切换空间；需 Android 7.0 及以上 |
+| headless 服务 | 无界面常驻，适合放后台、当传输通道；PID 文件、按天结构化日志、优雅退出 | 没有 UI，需配合浏览器 / App / CLI 使用；与服务端是同一个程序，加 `--headless` 即可 |
+| 命令行客户端（CLI） | `health` / `spaces` / `ls` / `put` / `get` / `rm`；支持 `--json`、sha256 校验、语义化退出码 | `--resume` 仅预留参数，当前仍是完整下载 |
+| 多空间隔离 | 通过 `spaces.yaml` 把不同目录分成独立空间，可设只读、独立口令 | 只发布/列出单层文件，不展示子目录；越界路径一律拒绝 |
+
+## 交付文件
 
 | 文件 | 用途 |
 |---|---|
-| `release/lan-transfer-desktop.exe` | Windows 电脑端，单文件绿色版，双击运行 |
-| `release/lan-transfer-cli.exe` | 命令行客户端（供脚本 / AI / 其他项目调用） |
-| `release/lan-transfer-android.apk` | 安卓安装包（Android 7.0 及以上） |
-| `release/shared-files/` | 电脑端共享目录（手机能看到、能下载的文件） |
-| `release/received-files/` | 手机上传到电脑的文件 |
+| `release/lan-transfer-desktop.exe` | Windows 电脑端（带界面），单文件绿色版，双击运行 |
+| `release/lan-transfer-android.apk` | 安卓安装包 |
+| `release/lan-transfer-cli.exe` | 命令行客户端，给脚本 / 其他程序调用 |
+| `release/shared-files/` | 电脑端「发布文件」目录（手机可下载） |
+| `release/received-files/` | 电脑端「接收文件」目录（手机上传落这里） |
 
-> `release/` 与构建产物已在 `.gitignore` 中排除，不提交到 GitHub；请从发布页或本地构建获取。
+> `release/`、`*.exe`、`*.apk` 已被 `.gitignore` 排除，不会提交到仓库；
+> 请从本仓库的 [Releases 页面](https://github.com/gman228915-png/lan-transfer/releases) 下载，
+> 或按文末「从源码运行 / 自行打包」自行构建。
 
-## 电脑端启动
+## 快速开始
 
-1. 双击 `release/lan-transfer-desktop.exe`（Windows 可能提示「未知发布者」，选择「仍要运行」）。
-2. 程序会自动启动服务，窗口里能看到这几样东西：
-   - **局域网 IP** 和 **端口**（默认 8765，被占用会自动顺延，窗口会提示实际端口）
-   - **访问口令**（10 位字母数字，每次启动随机生成）
-   - **访问链接**（`https://IP:端口/?k=口令`）和二维码
-3. 按钮说明：
-   - `添加文件` / `添加文件夹`：把文件放进发布目录 `shared-files`，手机端才能下载
-   - `打开发布文件夹` / `打开接收文件夹`：在资源管理器里查看 `shared-files` / `received-files`
-   - `复制链接`：把带口令的完整链接复制到剪贴板
-   - `打开网页`：在电脑浏览器里打开同一个网页端
-   - `停止服务` / `启动服务`：手动控制服务
+### 1. 下载哪个文件
 
-首次运行时 Windows 防火墙会弹窗，**必须选「允许访问」**（勾选专用网络即可）。
+- 只在 Windows 电脑上收发：下载 `lan-transfer-desktop.exe` 就够了。
+- 手机端想要更顺手的体验：再安装 `lan-transfer-android.apk`（不装也能用手机浏览器）。
+- 需要脚本调用：下载 `lan-transfer-cli.exe`。
 
-## 手机端 / 网页端连接
+### 2. 双击 exe 后发生什么
 
-前提：**手机和电脑连接同一个 Wi-Fi / 同一局域网**。
+1. Windows 可能提示「未知发布者 / 已保护你的电脑」，选择「更多信息 → 仍要运行」。
+2. 程序**自动启动服务**，窗口顶部状态变为「● 运行中」，同时生成一个 10 位随机访问口令。
+3. 窗口里可以直接看到：局域网 IP、端口、口令、完整访问链接
+   （形如 `https://192.168.1.10:8765/?k=abcd1234ef`）和二维码。
+4. 首次运行 Windows 防火墙会弹窗，**勾选「专用网络」并选择「允许访问」**，否则手机连不上。
 
-### 手机 App（推荐）
+### 3. 同 Wi-Fi 手机怎么连
 
-1. 安装 `release/lan-transfer-android.apk`。
-2. 打开 App，点「📷 扫码」扫描电脑窗口里的二维码，会自动填好地址和口令并连接。
-3. 也可以手动填写：地址形如 `https://192.168.1.10:8765`，口令从电脑窗口的「访问口令」抄过来。
-4. 连接成功后：
-   - 文件列表 = 电脑 `shared-files`（发布）+ `received-files`（接收）里的所有文件，点右侧「下载」
-   - 点「上传文件」可多选，上传进度和百分比会显示在状态栏
-   - 点「📁 已下载」可以打开 / 分享 / 另存到公共目录 / 删除本地副本
-5. App 会记住上次的地址和口令，下次打开自动重连。
+前提：手机和电脑连同一个路由器 / 同一个 Wi-Fi，不要用手机流量。
 
-### 网页端（免安装）
+- **扫码（安卓 App）**：打开 App 点「扫码」，对准电脑窗口里的二维码，地址和口令会自动填入并连接。
+- **手输（安卓 App）**：地址填 `https://192.168.1.10:8765`（以窗口里显示的 IP 为准），
+  口令填窗口里「访问口令」那一串，点连接。
+- **手机浏览器**：直接打开电脑窗口里的完整链接（**必须带 `?k=口令`**），
+  或先访问 `https://IP:端口` 再在页面里输入口令。
 
-1. 手机浏览器扫描电脑二维码，或输入电脑窗口里显示的完整链接（**必须带 `?k=口令`**）。
-2. 电脑浏览器可直接点「打开网页」。
-3. 网页端支持点击/拖拽上传（带进度条、失败可重试）、下载、删除。
-4. 网页端右上角可切换**空间**（inbox / shared / 自定义空间），默认「全部空间」。
-5. 首次打开若提示证书不受信任（自签名证书），选择「继续访问 / 高级 → 继续前往」即可。
+> 公司、酒店等公共 Wi-Fi 常开启「AP 隔离」，设备之间互相不可见，这种网络无法互传；
+> 可以改用手机热点，让电脑连手机热点，再重新扫码。
 
-> 地址和口令从哪里看？都在**电脑端窗口**的「服务信息」和二维码区域里；网页端的连接卡片里也会显示当前链接。
+## 电脑端界面说明
 
-## 给程序 / AI 当传输通道（Headless + CLI）
+窗口分左右两栏，共四张卡片：
 
-除了给人点界面，也可以把它当成本地局域网的「文件传输 API」：
+1. **服务信息**：主机名、局域网 IP、端口、访问口令、是否启用 HTTPS、监听说明、发布目录、接收目录；若配置了多空间还会列出每个空间的名称、模式（rw/ro）和路径。
+   按钮：`启动服务 / 停止服务`、`打开网页`、`复制链接`、`打开文件夹`（打开发布目录）。
+2. **手机扫码连接**：显示二维码和完整访问链接；启动服务后才能看到。
+3. **发布文件（电脑 → 手机）**：列出 `shared-files` 里的文件；按钮 `添加文件`、`添加文件夹`、`删除所选`、`打开文件夹`。
+   列表上方有一行说明：「文件用『添加文件』，整目录用『添加文件夹』，两者都支持任意格式」。
+4. **接收文件（手机 → 电脑）**：列出 `received-files` 里的文件，手机上传后自动出现在这里（每 2 秒自动刷新）；
+   按钮 `刷新`、`打开接收文件夹`。
 
-### 无界面常驻
+### 「添加文件」和「添加文件夹」的区别
+
+| | 添加文件 | 添加文件夹 |
+|---|---|---|
+| 对话框标题 | 选择要发布的文件（可多选） | 选择要发布的文件夹（整个目录一起发布） |
+| 选择方式 | Windows 文件对话框，可多选文件 | Windows 文件夹对话框，只能选目录 |
+| 格式限制 | 无；第一项是「所有文件 (*.*)」，另有常用文档 / 图片 / 音视频 / 压缩包作为快捷筛选 | 无；目录内任意后缀的文件都会发布 |
+| 结果 | 选中的文件复制到 `shared-files` | 递归读取目录下所有文件（含子目录），**平铺**复制到 `shared-files`，完成后提示「已发布 N 个文件」 |
+| 已知限制 | — | 不保留原始目录层级；同名文件自动改名（`a (1).txt`） |
+
+> 文件夹对话框是 Windows 系统自带的选择器，本来就只列目录、不列文件，这是正常现象；
+> 想选单个文件请点「添加文件」。复制在后台线程执行，大文件夹不会卡住界面。
+
+### 端口被占用时
+
+程序请求 8765，若被占用会在 **8765 ~ 8776** 之间自动找空闲端口，
+「服务信息」卡片会多出一行提示：`端口提示：默认端口 8765 被占用，已自动改用 XXXX`。
+以窗口里显示的端口为准重新扫码 / 打开链接即可，不需要手动处理。
+
+## 网页端与安卓端
+
+### 网页端
+
+- 打开链接时必须带口令：`https://IP:端口/?k=口令`；电脑上也可点「打开网页」。
+- 支持点击选择或拖拽上传（多选、进度条、失败可单条重试）、下载、删除（删除前会确认）。
+- 首次访问会提示「您的连接不是私密连接」——这是自签名证书，点「高级 → 继续前往」即可。
+- 右上角可切换空间，默认「全部空间」；只读空间会标注「（只读）」，其中的文件只能下载。
+
+### 安卓端
+
+- 安装 APK 后打开，扫码或手输地址 + 口令；连接成功后会自动记住，下次打开自动重连。
+- 文件列表显示所有空间里的文件，点条目右侧即可下载；上传时会显示进度与百分比。
+- 下载的文件保存在 App 专属目录（`Android/data/com.lantransfer/files/Download/`），
+  Windows 文件管理器或系统文件管理器可能看不到；在 App 内点「已下载」可打开、分享、移动/另存到公共目录或删除，不需要存储权限。
+- 电脑端证书重建后，App 会因证书指纹变化而拒绝连接，按提示点「清除并重连」即可。
+
+## 命令行客户端（CLI）
+
+`release/lan-transfer-cli.exe` 也可用 `python desktop-client\lan_transfer_cli.py` 直接运行。
 
 ```powershell
-# 源码运行
-python desktop-client\lan_transfer.py --headless --port 8765 --token-file token.txt `
-    --spaces-file spaces.yaml --data-dir D:\lan-transfer-data --log-file service.log
-
-# 或用打包好的 exe
-release\lan-transfer-desktop.exe --headless --port 8765 --token-file token.txt
-```
-
-- 首次运行若 `--token-file` 不存在，会**自动生成**并写入该文件。
-- 写 PID 文件 `lan-transfer.pid`，结构化日志按天切分（`logs/service-YYYY-MM-DD.log`）。
-- `Ctrl+C` / SIGINT / SIGTERM / SIGBREAK 触发优雅退出并清理 PID。
-- 端口被占用时仍会自动顺延，`/api/health` 会返回 `port_fallback` 和实际端口。
-
-### 命令行客户端
-
-```powershell
-# 查看服务状态（不需要口令）
+# 1) 健康检查（不需要口令）
 release\lan-transfer-cli.exe health --server https://10.0.0.5:8765 --json
 
-# 查看空间
-release\lan-transfer-cli.exe spaces --server https://10.0.0.5:8765 --token-file token.txt
+# 2) 列出空间（需要口令）
+release\lan-transfer-cli.exe spaces --server https://10.0.0.5:8765 --token-file token.txt --json
 
-# 上传多个文件 + 整个目录（-r），上传后自动校验 sha256
-release\lan-transfer-cli.exe put .\a.txt .\docs -r --space shared `
-    --server https://10.0.0.5:8765 --token-file token.txt --json
+# 3) 列出文件名
+release\lan-transfer-cli.exe ls --space shared --server https://10.0.0.5:8765 --token-file token.txt --json
 
-# 下载到指定目录并校验 sha256
-release\lan-transfer-cli.exe get report.pdf -o .\downloads `
-    --server https://10.0.0.5:8765 --token-file token.txt --json
+# 4) 上传多个文件，并递归上传整个目录（默认校验 sha256）
+release\lan-transfer-cli.exe put .\a.txt .\docs -r --space shared --server https://10.0.0.5:8765 --token-file token.txt --verify-sha256 --json
 
-# 列出 / 删除
-release\lan-transfer-cli.exe ls --space shared --server https://10.0.0.5:8765 --token-file token.txt
-release\lan-transfer-cli.exe rm old.txt --server https://10.0.0.5:8765 --token-file token.txt
+# 5) 下载到指定目录（默认校验 sha256）
+release\lan-transfer-cli.exe get report.pdf -o .\downloads --space shared --server https://10.0.0.5:8765 --token-file token.txt --verify-sha256 --json
+
+# 6) 删除文件
+release\lan-transfer-cli.exe rm old.txt --space shared --server https://10.0.0.5:8765 --token-file token.txt --json
 ```
 
-- 直接跑源码也行：`python desktop-client\lan_transfer_cli.py ...`
-- `--json` 输出适合程序解析（含 `sha256`、`bytes`、`elapsed_ms`）。
-- 退出码：`0` 成功、`1` 失败、`2` 参数错误、`3` 口令/权限、`4` 网络、`5` sha256 不一致、`6` 不存在。
-- 断点续传参数 `--resume` 已预留，当前会完整下载。
-- 完整接口见 [docs/api.md](docs/api.md)。
+- 公共参数：`--server`、`--space`、`--token-file`、`--token`、`--json`、`--verify-sha256` / `--no-verify-sha256`、`--resume`（占位）。
+- 环境变量：`LAN_TRANSFER_SERVER`、`LAN_TRANSFER_TOKEN_FILE`、`LAN_TRANSFER_TOKEN`。
+- `--json` 输出包含 `sha256`、`bytes`、`elapsed_ms` 等字段，便于程序解析。
+- 退出码：`0` 成功、`1` 一般失败、`2` 参数错误、`3` 口令/权限错误、`4` 网络错误、`5` sha256 不一致、`6` 文件或空间不存在。
+- CLI 对自签名证书不做主机名校验（与局域网使用场景一致），内容完整性依赖 sha256 校验。
 
-## 多空间（项目隔离）
+## headless 模式（无界面常驻）
 
-`spaces.yaml` 用于把不同项目/用途的目录隔离开，每个空间可独立设置只读与口令：
+```powershell
+# 用打包好的 exe
+release\lan-transfer-desktop.exe --headless --port 8765 --token-file token.txt `
+    --spaces-file spaces.yaml --data-dir D:\lan-transfer-data --log-file service.log
+
+# 或直接跑源码
+python desktop-client\lan_transfer.py --headless --port 8765 --token-file token.txt
+```
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--headless` | 关 | 无界面常驻模式，必须带上 |
+| `--port` | `8765` | 起始端口，被占用时在 `port ~ port+11` 内顺延 |
+| `--bind` | `lan` | 监听地址；`lan` 表示只绑当前局域网 IP，也可填具体 IP（如 `127.0.0.1`）或 `0.0.0.0` |
+| `--token-file` | 空 | 口令文件：存在则读取，不存在则自动生成 10 位口令并写入 |
+| `--spaces-file` | 空 | 空间配置，支持 `.yaml` / `.json`；默认用数据目录下的 `spaces.yaml` |
+| `--log-file` | 空 | 指定固定服务日志文件；不填则按天写到 `logs/service-YYYY-MM-DD.log` |
+| `--data-dir` | 空 | 数据目录：文件、证书、配置、PID、日志都放这里；默认是 exe / 脚本所在目录 |
+
+- **PID 文件**：`<数据目录>\lan-transfer.pid`，启动成功后写入，收到 SIGINT / SIGTERM / SIGBREAK 优雅退出时删除。
+- 日志为 JSON Lines（每行一条），上传审计单独写入 `logs/upload-audit-YYYY-MM-DD.log`。
+- 启动后可访问 `/api/health` 查看版本、实际端口、是否发生端口顺延、空间列表与能力标记。
+
+## 多空间（目录隔离）
+
+数据目录下首次启动会自动生成 `spaces.yaml`，可以按项目/用途拆分目录：
 
 ```yaml
 default_space: inbox
@@ -130,61 +181,109 @@ spaces:
   - name: project-a
     path: D:\project-a\transfer
     mode: rw
-    token: project-a-token      # 只允许持有该口令的调用方访问
+    token: project-a-token      # 该空间独立口令
     description: A 项目专用
   - name: archive
     path: D:\archive\transfer
-    mode: ro                     # 只读：可下载，上传/删除返回 403
+    mode: ro                     # 只读：只能下载
 ```
 
-- 配置文件默认是程序目录下的 `spaces.yaml`，首次启动自动生成示例，老用户升级无感。
-- 也支持 JSON：`--spaces-file spaces.json`。
-- 服务端只允许访问配置里列出的目录，文件名只允许单层，越界路径直接拒绝。
-- 全局口令可以访问所有空间；空间独立 `token` 只能访问自己的空间。
-- 电脑端窗口会显示空间列表与各自目录；网页端右上角可切换空间；安卓端当前固定使用默认空间。
+- **全局口令**（窗口里显示的那一串 / `--token-file` 的内容）可以访问所有空间；
+  空间里单独写了 `token` 的，该口令只能访问这个空间。
+- **只读空间**（`mode: ro`）：允许列出和下载，上传、删除返回 403。
+  网页端会标注「（只读）」；CLI 对只读空间执行 `put` / `rm` 会得到权限错误。
+- 不带 `space` 参数时：列出全部空间（需要全局口令），上传落到 `default_space`（默认 `inbox`）。
+- 服务端只允许访问配置里写明的目录，文件名一律清洗成单层，越界路径直接拒绝。
+- 电脑端窗口会显示空间名称、模式与路径；网页端可切换空间；安卓端固定用默认空间。
+- 支持 JSON 配置（`--spaces-file spaces.json`）。
+
+## 数据与目录
+
+以 exe 放在 `D:\lan-transfer\` 为例：
+
+| 路径 | 内容 |
+|---|---|
+| `D:\lan-transfer\received-files\` | 「接收文件」目录（默认空间 `inbox`）；手机/网页/CLI 上传默认落这里 |
+| `D:\lan-transfer\shared-files\` | 「发布文件」目录（默认空间 `shared`）；GUI 里「添加文件 / 添加文件夹」复制到这里 |
+| `D:\lan-transfer\logs\service-YYYY-MM-DD.log` | 服务日志（JSON Lines，按天切分），启动信息、端口顺延、错误等都在这 |
+| `D:\lan-transfer\logs\upload-audit-YYYY-MM-DD.log` | 上传审计：时间、空间、文件名、字节数、来源 IP、成功/失败、sha256 |
+| `D:\lan-transfer\lan-transfer.pid` | headless 模式的进程号（正常退出会删除） |
+| `D:\lan-transfer\spaces.yaml` | 空间配置（首次自动生成） |
+| `D:\lan-transfer\.lan_transfer_cert.pem` / `.lan_transfer_key.pem` | 自签名 HTTPS 证书与私钥（首次启动自动生成） |
+
+> **没有 `error.log`**。错误信息写入 `logs/service-YYYY-MM-DD.log`（`level` 为 `error` 的记录），
+> 桌面端同时会弹窗提示；排查问题请看服务日志。
+
+**怎么改路径：**
+
+- 桌面端：数据目录跟随 exe 所在目录，把 exe 移到别处即可（会在新目录重新生成证书与目录）。
+- headless：用 `--data-dir` 一次性改变文件、证书、配置、PID、日志的位置；
+  日志还可用 `--log-file` 固定到单个文件，空间配置可用 `--spaces-file` 指定。
+- 空间目录：直接改 `spaces.yaml` 里各空间的 `path`（支持绝对路径），改完重启服务生效。
+- 源码运行：默认以 `desktop-client\` 为数据目录，也可在 `lan_transfer.py` 命令上加 `--data-dir`。
+
+## 安全说明
+
+- **只监听局域网**：默认只绑定当前局域网 IP，不监听公网网卡；headless 可用 `--bind` 指定地址。
+  如果取不到局域网 IP，会退回监听所有网卡，此时建议手动指定 `--bind`。
+- **HTTPS 自签名**：首次启动自动生成本地证书；浏览器首次访问需手动信任（「高级 → 继续前往」）。
+  安卓端采用 TOFU（首次连接记录证书 SHA-256 指纹），指纹变化会拒绝连接并提示确认。
+- **口令校验**：页面与接口要求 `?k=口令`、Cookie 或 `Authorization: Bearer`；
+  比较使用 `hmac.compare_digest`（常量时间），避免计时侧信道。
+- **路径穿越防护**：上传/下载/删除的文件名都会清洗成单层文件名，
+  并校验解析后的真实路径仍在对应空间目录内。
+- **多空间隔离**：只允许访问 `spaces.yaml` 里列出的目录；只读空间拒绝写操作；空间独立口令只能访问自身。
+- **审计日志**：所有上传记录到 `logs/upload-audit-*.log`，便于事后核对。
+- **不做公网穿透**：不连接任何云端服务器，数据只在局域网内直传。
 
 ## 常见问题（FAQ）
 
 **1. 手机连不上 / 一直转圈**
-- 确认手机和电脑连的是同一个 Wi-Fi（同一路由器、同一网段），不要用手机流量。
-- 确认电脑端窗口显示「● 运行中」，且 Windows 防火墙允许该程序访问**专用网络**。
-- 手机 App 里的地址要和窗口里的「局域网 IP」一致；电脑换了 Wi-Fi 后 IP 会变，重新扫码即可。
-- 公司/酒店 Wi-Fi 常开启「AP 隔离」，设备之间互不可见，这种网络下无法互传，改用手机热点。
 
-**2. 防火墙怎么放行**
-- 首次运行弹窗时选择「允许访问」，并勾选「专用网络」。
-- 若之前误点了「取消」：`控制面板 → Windows Defender 防火墙 → 允许应用通过防火墙`，
-  找到 `lan-transfer-desktop`（或点击「更改设置 → 允许其他应用」添加 exe），勾选专用网络。
-- 不想改系统设置时，可临时把当前 Wi-Fi 网络类型设为「专用网络」。
+- 确认手机和电脑在同一个 Wi-Fi、同一网段，不要用手机流量。
+- 确认电脑端状态是「● 运行中」，且防火墙已允许该程序访问专用网络。
+- 电脑换了 Wi-Fi 后 IP 会变，重新扫码或按窗口里的新 IP 输入。
+- 公共 Wi-Fi 的「AP 隔离」会让设备互相不可见，改用手机热点。
+
+**2. 首次打开网页提示证书不安全**
+
+- 正常现象：用的是本地自签名证书，只用于加密局域网流量。
+- 点「高级 → 继续前往（不安全）」即可；不需要安装任何证书。
 
 **3. 端口被占用**
-- 电脑端会自动在 8765～8776 之间找空闲端口，窗口会显示「默认端口 8765 被占用，已自动改用 XXXX」。
-- 以新端口为准重新扫码/打开链接即可；无需手动处理。
-- 想固定端口可在源码方式运行时加 `--port 9000`。
 
-**4. 浏览器提示「您的连接不是私密连接」**
-- 正常现象：电脑端使用的是自签名的本地 HTTPS 证书，只用于加密局域网流量。
-- 点「高级 → 继续前往（不安全）」即可；手机 App 首次连接会自动记住证书指纹（TOFU）。
+- 程序会自动在 8765~8776 间顺延，窗口会提示实际端口，`/api/health` 里也有 `port_fallback`。
+- 用新端口重新扫码即可；想固定端口请用 headless 或源码方式加 `--port`。
 
-**5. 手机下载的文件在哪**
+**4. 防火墙怎么放行**
+
+- 首次运行弹窗时选「允许访问」，勾选「专用网络」。
+- 若之前误点了取消：`控制面板 → Windows Defender 防火墙 → 允许应用通过防火墙`，
+  找到 `lan-transfer-desktop`，勾选专用网络；找不到就点「允许其他应用」手动添加 exe。
+
+**5. 点了「添加文件夹」却看不到文件选择**
+
+- 这是 Windows 文件夹选择器，按设计只列目录、不列文件（标题也写着「整个目录一起发布」）。
+- 要选零散文件请点「添加文件」，它的默认筛选项是「所有文件 (*.*)」。
+- 「添加文件夹」会把目录内所有格式的文件平铺发布，完成后提示「已发布 N 个文件」。
+
+**6. 如何只给本机程序用（不暴露给局域网）**
+
+- 用 headless 模式并绑定本机回环地址：
+  `lan-transfer-desktop.exe --headless --bind 127.0.0.1 --port 8765 --token-file token.txt`
+- 之后只有本机进程能访问 `https://127.0.0.1:8765`，其他设备扫不到也连不上。
+- 桌面 GUI 固定监听局域网 IP，若需要仅本机使用，请用上面的 headless 方式。
+
+**7. 手机下载的文件在哪**
+
 - 在 App 专属目录 `Android/data/com.lantransfer/files/Download/`，系统文件管理器可能看不到。
-- 用 App 里的「📁 已下载 → 移动/另存到公共目录」导出到「下载」等公共位置，或直接用「分享」发到微信/QQ。
+- 在 App 内「已下载」里点「移动/另存到公共目录」或「分享」即可导出。
 
-**6. 上传大文件卡住怎么办**
-- 电脑端复制文件到发布目录是在后台线程执行的，不会卡住窗口；手机端有进度条，不会阻塞界面。
-- 传输中断后，网页端点进度条右侧「重试」，手机端在失败弹窗里点「重试」即可，无需重新选文件。
-- 超大文件建议电脑和手机都靠近路由器，避免 Wi-Fi 信号弱导致中断。
+**8. 传大文件中断了怎么办**
 
-## 安全说明
-
-- **只监听局域网**：电脑端默认只绑定当前局域网 IP，不监听公网网卡；也可用 `--bind` 指定地址。
-- **口令校验**：所有页面/接口都要求 `?k=口令`、Cookie 或 `Authorization: Bearer`，比较使用常量时间算法。
-- **多空间隔离**：只允许访问 `spaces.yaml` 里配置的目录；空间可设只读或独立口令，越权请求返回 403。
-- **路径穿越防护**：上传/下载/删除的文件名都会清洗成单层文件名，并校验解析后的真实路径仍在空间目录内。
-- **审计日志**：每次上传都记录时间、空间、文件名、字节数、来源 IP、成功/失败与 sha256，
-  按天写入 `logs/upload-audit-YYYY-MM-DD.log`。
-- **传输加密**：证书存在时启用 HTTPS（自签名）；手机端固定证书指纹，指纹变化会提示确认。
-- **不做公网穿透**：本工具不连接任何云端服务器，数据只在局域网内直传。
+- 网页端在失败的条目上点「重试」，安卓端在失败提示里重试，不需要重新选文件。
+- 大文件建议靠近路由器，避免 Wi-Fi 信号弱导致中断。
+- CLI 的 `--resume` 目前只是占位参数，仍会完整下载。
 
 ## 项目结构
 
@@ -192,35 +291,42 @@ spaces:
 .
 ├── desktop-client/                  # 电脑端（Python 3 + Tkinter）
 │   ├── main_gui.py                  # 桌面 GUI
-│   ├── lan_transfer.py              # 核心服务（HTTP/HTTPS、空间、上传下载、口令校验、headless）
-│   ├── lan_transfer_cli.py          # 命令行客户端（put/get/ls/rm/spaces/health）
+│   ├── lan_transfer.py              # 核心服务（HTTP/HTTPS、空间、上传下载、口令、headless）
+│   ├── lan_transfer_cli.py          # 命令行客户端
 │   ├── static/                      # 网页端（index.html / app.js / style.css / qrcode.js）
 │   ├── gen_mtls.py                  # 生成自签名证书（可选）
 │   ├── run_desktop.bat              # 免打包，直接源码运行
 │   ├── lan-transfer-desktop.spec    # 桌面端 PyInstaller 配置
 │   └── lan-transfer-cli.spec        # 命令行 PyInstaller 配置
 ├── docs/api.md                      # HTTP / API 契约文档
-├── android-app/                     # 安卓端（Kotlin，Gradle 构建）
-│   ├── app/src/main/…               # 源码、布局、资源
+├── android-app/                     # 安卓端（Kotlin + Gradle）
+│   ├── app/src/main/...             # 源码、布局、资源
 │   └── build_apk.ps1                # 一键编译 + 签名，输出到 release
 ├── web-client/                      # 旧版网页资源（已废弃，仅留档）
 ├── release/                         # 交付产物（不入库）
-│   ├── lan-transfer-desktop.exe
-│   ├── lan-transfer-android.apk
-│   ├── shared-files/                # 电脑端「发布文件」目录（手机可下载）
-│   └── received-files/              # 电脑端「接收文件」目录（手机上传落这里）
+├── CHANGELOG.md                     # 更新记录
 └── README.md
 ```
 
-> exe 运行时在**自身所在目录**创建 `shared-files`（发布）和 `received-files`（接收）两个目录；
-> 界面上仍叫「发布文件 / 接收文件」，只是目录名使用英文。旧版中文目录启动时会自动迁移，不会丢文件。
+## 从源码运行 / 自行打包
 
-## 从源码构建
-
-### 电脑端 exe（PyInstaller 单文件）
+### 源码直接运行（不打包）
 
 ```powershell
 cd desktop-client
+python -m pip install qrcode pillow cryptography
+python main_gui.py
+```
+
+- `qrcode`、`pillow` 用于二维码显示；`cryptography` 可选，装了就启用 HTTPS，没装则以 HTTP 明文运行。
+- 也可双击 `run_desktop.bat`。
+- 无界面模式：`python lan_transfer.py --headless --port 8765 --token-file token.txt`。
+
+### 打包电脑端 exe（PyInstaller 单文件）
+
+```powershell
+cd desktop-client
+python -m pip install pyinstaller
 python -m PyInstaller lan-transfer-desktop.spec --clean --noconfirm
 copy dist\lan-transfer-desktop.exe ..\release\lan-transfer-desktop.exe
 
@@ -228,9 +334,7 @@ python -m PyInstaller lan-transfer-cli.spec --clean --noconfirm
 copy dist\lan-transfer-cli.exe ..\release\lan-transfer-cli.exe
 ```
 
-依赖：Python 3.9+、`pyinstaller`、`qrcode`、`Pillow`、`cryptography`（HTTPS 可选）。
-
-### 安卓 APK
+### 打包安卓 APK
 
 ```powershell
 cd android-app
@@ -238,8 +342,12 @@ cd android-app
 ```
 
 脚本使用工作区内的 `jdk17/`、`android-sdk/`、`gradle/`（均不提交到仓库），
-编译后用 `lan-transfer.keystore` 签名，直接输出 `release/lan-transfer-android.apk`。
+编译后用 `lan-transfer.keystore` 签名，输出 `release/lan-transfer-android.apk`。
 
-## License
+## License 与来源说明
 
-MIT
+- 许可：MIT。
+- 来源：本项目为局域网自用工具，全部代码在本仓库内，无第三方云端依赖。
+- 仓库当前未单独放置 `LICENSE` 文件；如需正式授权文件可自行补充。
+- 相关文档：[更新记录](CHANGELOG.md) ｜ [HTTP 接口文档](docs/api.md)
+</content>
