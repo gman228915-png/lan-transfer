@@ -20,7 +20,7 @@
 {
   "ok": true,
   "app": "lan-transfer",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "api_version": 1,
   "listen": "10.113.107.46",
   "port": 8765,
@@ -59,7 +59,7 @@
 ```json
 {
   "default": "inbox",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "spaces": [
     {
       "name": "inbox",

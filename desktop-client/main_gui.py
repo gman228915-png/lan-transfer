@@ -41,7 +41,7 @@ def gen_qr_image(url, box_size=5, border=3):
 class LanTransferApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("局域网互传")
+        self.root.title("局域网互传 v%s" % lan_transfer.APP_VERSION)
         self.root.geometry("1080x780")
         self.root.minsize(1020, 740)
 
@@ -72,6 +72,8 @@ class LanTransferApp:
         self.status_indicator = tk.Label(header, text="●  未启动", font=("Segoe UI", 11),
                                          fg="#ff6b6b", bg="#1a1f36")
         self.status_indicator.pack(side="right", padx=20, pady=15)
+        tk.Label(header, text="v" + lan_transfer.APP_VERSION, font=("Segoe UI", 9),
+                 fg="#6b7a99", bg="#1a1f36").pack(side="right", padx=(0, 6), pady=15)
 
         # 主体：左列（服务信息 + 二维码），右列（发布 / 接收列表）
         body = tk.Frame(self.root, bg="#0f1425")
