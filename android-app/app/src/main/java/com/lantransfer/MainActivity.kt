@@ -5,10 +5,10 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.os.Environment
-import android.provider.Settings
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -23,6 +23,7 @@ import com.lantransfer.databinding.ActivityMainBinding
 import kotlinx.coroutines.*
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.math.max
 
 class MainActivity : AppCompatActivity() {
 
@@ -30,6 +31,11 @@ class MainActivity : AppCompatActivity() {
     private var api: ApiClient? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var adapter: FileAdapter
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** 正在连接 / 上传 / 下载，防止重复操作 */
+    private var opRunning = false
+    private var lastProgressAt = 0L
 
     /** 下载到应用专属外部存储 —— 所有 Android 版本都无需任何权限就能读写 */
     private val downloadDir: File by lazy {
@@ -42,7 +48,14 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            result.data?.data?.let { uri -> uploadFromUri(uri) }
+            val uris = mutableListOf<Uri>()
+            result.data?.clipData?.let { clip ->
+                for (i in 0 until clip.itemCount) {
+                    clip.getItemAt(i)?.uri?.let { uris.add(it) }
+                }
+            }
+            if (uris.isEmpty()) result.data?.data?.let { uris.add(it) }
+            if (uris.isNotEmpty()) uploadUris(uris)
         }
     }
 
@@ -60,10 +73,18 @@ class MainActivity : AppCompatActivity() {
         binding.btnScan.setOnClickListener { scan() }
         binding.btnOpenDownloads.setOnClickListener { showDownloadOptions() }
 
-        // 自动填充保存的设置
+        // 记住上次地址与口令；有记录时自动重连
         val sp = getSharedPreferences("lantransfer", MODE_PRIVATE)
-        sp.getString("url", "")?.let { if (it.isNotEmpty()) binding.etUrl.setText(it) }
-        sp.getString("token", "")?.let { if (it.isNotEmpty()) binding.etToken.setText(it) }
+        val savedUrl = sp.getString("url", "") ?: ""
+        val savedToken = sp.getString("token", "") ?: ""
+        if (savedUrl.isNotEmpty()) binding.etUrl.setText(savedUrl)
+        if (savedToken.isNotEmpty()) binding.etToken.setText(savedToken)
+        if (savedUrl.isNotEmpty() && savedToken.isNotEmpty()) {
+            binding.tvStatus.text = "正在连接上次的电脑…"
+            connect()
+        } else {
+            binding.tvStatus.text = "未连接 · 扫码或输入地址后点连接"
+        }
     }
 
     // --------------------------------------------------------------------------- #
@@ -95,11 +116,16 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "无法识别二维码内容", Toast.LENGTH_SHORT).show()
             return
         }
+        val scheme = if (uri.scheme?.lowercase() == "http") "http" else "https"
         val port = if (uri.port > 0) uri.port else 8765
         val token = uri.getQueryParameter("k") ?: ""
-        val base = "https://$host:$port"
+        val base = "$scheme://$host:$port"
         binding.etUrl.setText(base)
         binding.etToken.setText(token)
+        if (token.isEmpty()) {
+            Toast.makeText(this, "二维码里没有口令，请输入电脑端显示的口令", Toast.LENGTH_LONG).show()
+            return
+        }
         Toast.makeText(this, "已识别：$base", Toast.LENGTH_SHORT).show()
         connect()
     }
@@ -108,11 +134,16 @@ class MainActivity : AppCompatActivity() {
     // 连接
     // --------------------------------------------------------------------------- #
     private fun connect() {
+        if (opRunning) {
+            Toast.makeText(this, "正在传输，请稍候", Toast.LENGTH_SHORT).show()
+            return
+        }
         val url = binding.etUrl.text.toString().trim().trimEnd('/')
         var token = binding.etToken.text.toString().trim()
 
         if (url.isEmpty()) {
-            Toast.makeText(this, "请输入服务器地址", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "请输入电脑端地址，如 https://192.168.1.10:8765",
+                Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -123,9 +154,13 @@ class MainActivity : AppCompatActivity() {
             token = parts.getOrNull(1) ?: ""
             binding.etToken.setText(token)
         }
+        if (token.isEmpty()) {
+            Toast.makeText(this, "请输入口令（电脑端窗口里能看到）", Toast.LENGTH_SHORT).show()
+            return
+        }
 
         val api = ApiClient(url, token, this)
-        binding.tvStatus.text = "连接中..."
+        binding.tvStatus.text = "连接中…"
 
         scope.launch {
             val ok = api.testConnection()
@@ -135,13 +170,23 @@ class MainActivity : AppCompatActivity() {
                     getSharedPreferences("lantransfer", MODE_PRIVATE)
                         .edit().putString("url", url).putString("token", token).apply()
                     binding.tvStatus.text = "已连接 ✓"
-                    getSharedPreferences("lantransfer", MODE_PRIVATE)
-                        .edit().putString("url", url).putString("token", token).apply()
                     refreshFiles()
                 } else {
                     val msg = api.lastError ?: "无法连接到服务器"
                     binding.tvStatus.text = "连接失败"
-                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+                    if (api.pinMismatch) {
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("证书指纹变化")
+                            .setMessage(msg)
+                            .setPositiveButton("清除并重连") { _, _ ->
+                                api.resetPin()
+                                connect()
+                            }
+                            .setNegativeButton("取消", null)
+                            .show()
+                    } else {
+                        Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+                    }
                 }
             }
         }
@@ -155,50 +200,105 @@ class MainActivity : AppCompatActivity() {
                 adapter.update(list)
                 binding.tvInfo.text = "共 ${list.size} 个文件"
                 binding.tvEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
+                if (list.isEmpty() && api.lastError != null) {
+                    binding.tvStatus.text = api.lastError
+                }
             }
         }
     }
 
     // --------------------------------------------------------------------------- #
-    // 上传（SAF，不需要任何存储权限）
+    // 上传（SAF，不需要任何存储权限；支持多选批量）
     // --------------------------------------------------------------------------- #
     private fun pickFile() {
         api ?: run {
             Toast.makeText(this, "请先连接服务器", Toast.LENGTH_SHORT).show()
             return
         }
+        if (opRunning) {
+            Toast.makeText(this, "正在传输，请稍候", Toast.LENGTH_SHORT).show()
+            return
+        }
         val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
             type = "*/*"
             addCategory(Intent.CATEGORY_OPENABLE)
-            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
         }
-        pickLauncher.launch(Intent.createChooser(intent, "选择文件"))
+        pickLauncher.launch(Intent.createChooser(intent, "选择文件（可多选）"))
     }
 
-    private fun uploadFromUri(uri: Uri) {
-        val api = api ?: return
-        val name = getFileName(uri) ?: "unknown"
-        val size = getFileSize(uri)
+    private data class UploadItem(val uri: Uri, val name: String, val size: Long)
 
-        binding.tvStatus.text = "上传中: $name"
+    private fun uploadUris(uris: List<Uri>) {
+        val api = api ?: run {
+            Toast.makeText(this, "请先连接服务器", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (opRunning) {
+            Toast.makeText(this, "正在传输，请稍候", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val items = uris.map {
+            UploadItem(it, getFileName(it) ?: "unknown", getFileSize(it))
+        }
+        val totalBytes = items.sumOf { max(it.size, 0L) }
+
         scope.launch {
-            var ok = false
-            try {
-                contentResolver.openInputStream(uri)?.use { input ->
-                    ok = api.uploadFile(name, input, size)
-                }
-            } catch (e: Exception) {
-                ok = false
-            }
             withContext(Dispatchers.Main) {
-                if (ok) {
-                    Toast.makeText(this@MainActivity, "上传成功", Toast.LENGTH_SHORT).show()
-                    binding.tvStatus.text = "上传成功"
+                opRunning = true
+                showProgress(true)
+                binding.btnUpload.isEnabled = false
+            }
+
+            val failed = mutableListOf<Uri>()
+            var sentBefore = 0L
+            var index = 0
+
+            for (item in items) {
+                index++
+                if (item.size <= 0) {
+                    failed.add(item.uri)
+                    continue
+                }
+                withContext(Dispatchers.Main) {
+                    binding.tvStatus.text = "上传 $index/${items.size}：${item.name}"
+                }
+
+                var ok = false
+                try {
+                    contentResolver.openInputStream(item.uri)?.use { input ->
+                        ok = api.uploadFile(item.name, input, item.size) { done, _ ->
+                            updateProgress(sentBefore + done, totalBytes,
+                                "上传 $index/${items.size}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    ok = false
+                }
+
+                if (ok) sentBefore += item.size else failed.add(item.uri)
+            }
+
+            withContext(Dispatchers.Main) {
+                opRunning = false
+                binding.btnUpload.isEnabled = true
+                binding.progressBar.progress = if (failed.isEmpty()) 100 else {
+                    binding.progressBar.progress
+                }
+                if (failed.isEmpty()) {
+                    binding.tvStatus.text = "上传完成 ✓"
+                    Toast.makeText(this@MainActivity,
+                        "已上传 ${items.size} 个文件", Toast.LENGTH_SHORT).show()
                     refreshFiles()
+                    hideProgressLater()
                 } else {
-                    val msg = api.lastError ?: "上传失败"
-                    binding.tvStatus.text = "上传失败"
-                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+                    val msg = api.lastError ?: "网络异常"
+                    binding.tvStatus.text = "失败 ${failed.size}/${items.size} 个"
+                    showProgress(false)
+                    askRetry("上传失败：$msg\n\n已成功 ${items.size - failed.size} / ${items.size} 个") {
+                        uploadUris(failed.toList())
+                    }
                 }
             }
         }
@@ -220,7 +320,8 @@ class MainActivity : AppCompatActivity() {
                             Toast.makeText(this@MainActivity, "已删除", Toast.LENGTH_SHORT).show()
                             refreshFiles()
                         } else {
-                            Toast.makeText(this@MainActivity, "删除失败", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this@MainActivity,
+                                api.lastError ?: "删除失败", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -234,34 +335,93 @@ class MainActivity : AppCompatActivity() {
     // --------------------------------------------------------------------------- #
     private fun downloadFile(f: FileItem) {
         val api = api ?: return
+        if (opRunning) {
+            Toast.makeText(this, "正在传输，请稍候", Toast.LENGTH_SHORT).show()
+            return
+        }
         downloadDir.mkdirs()
-
-        Toast.makeText(this, "开始下载: ${f.name}", Toast.LENGTH_SHORT).show()
-        binding.tvStatus.text = "下载中: ${f.name}"
+        val dest = uniqueLocalFile(sanitizeFileName(f.name))
 
         scope.launch {
-            val dest = File(downloadDir, sanitizeFileName(f.name))
+            withContext(Dispatchers.Main) {
+                opRunning = true
+                showProgress(true)
+                binding.tvStatus.text = "下载：${f.name}"
+            }
 
-            try {
-                val conn = api.openDownload(f.name)
-                conn.inputStream.use { input ->
-                    FileOutputStream(dest).use { os ->
-                        input.copyTo(os)
-                    }
-                }
-                conn.disconnect()
-                withContext(Dispatchers.Main) {
-                    binding.tvStatus.text = "已下载到: ${downloadDir.name}/${dest.name}"
+            val ok = api.downloadFile(f.name, dest) { done, total ->
+                updateProgress(done, total, "下载 ${f.name}")
+            }
+
+            withContext(Dispatchers.Main) {
+                opRunning = false
+                if (ok) {
+                    binding.tvStatus.text = "已下载到：${downloadDir.name}/${dest.name}"
+                    binding.progressBar.progress = 100
                     Toast.makeText(this@MainActivity, "下载完成 ✓", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    val msg = api.errorText(e)
+                    hideProgressLater()
+                } else {
                     binding.tvStatus.text = "下载失败"
-                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+                    showProgress(false)
+                    askRetry(api.lastError ?: "下载失败，请检查 Wi-Fi") { downloadFile(f) }
                 }
             }
         }
+    }
+
+    // --------------------------------------------------------------------------- #
+    // 进度展示
+    // --------------------------------------------------------------------------- #
+    private fun updateProgress(done: Long, total: Long, label: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastProgressAt < 200 && done < total) return
+        lastProgressAt = now
+        runOnUiThread {
+            val pct = if (total > 0) ((done * 100) / total).toInt().coerceIn(0, 100) else 0
+            binding.progressBar.progress = pct
+            val sizeText = if (total > 0) {
+                " · ${FileItem.formatSize(done)} / ${FileItem.formatSize(total)}"
+            } else {
+                " · ${FileItem.formatSize(done)}"
+            }
+            binding.tvStatus.text = "$label  $pct%$sizeText"
+        }
+    }
+
+    private fun showProgress(show: Boolean) {
+        binding.progressBar.visibility = if (show) View.VISIBLE else View.GONE
+        if (!show) binding.progressBar.progress = 0
+        binding.btnConnect.isEnabled = !show
+        binding.btnScan.isEnabled = !show
+        binding.btnUpload.isEnabled = !show
+    }
+
+    private fun hideProgressLater() {
+        mainHandler.postDelayed({
+            if (!opRunning) showProgress(false)
+        }, 1200)
+    }
+
+    private fun askRetry(message: String, retry: () -> Unit) {
+        AlertDialog.Builder(this)
+            .setTitle("操作失败")
+            .setMessage(message)
+            .setPositiveButton("重试") { _, _ -> retry() }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun uniqueLocalFile(name: String): File {
+        var candidate = File(downloadDir, name)
+        if (!candidate.exists()) return candidate
+        val dot = name.lastIndexOf('.')
+        val stem = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        for (i in 1..999) {
+            candidate = File(downloadDir, "$stem ($i)$ext")
+            if (!candidate.exists()) return candidate
+        }
+        return File(downloadDir, "$stem-${System.currentTimeMillis()}$ext")
     }
 
     private fun sanitizeFileName(name: String): String {
@@ -535,5 +695,6 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         scope.cancel()
+        mainHandler.removeCallbacksAndMessages(null)
     }
 }

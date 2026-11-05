@@ -204,6 +204,19 @@ h1 { font-size: 19px; margin: 0; letter-spacing: 0.2px; }
 .up-item.failed .bar > i { background: var(--danger); }
 .up-item.done .up-pct { color: var(--accent-2); }
 
+.retry {
+  flex: none;
+  margin-left: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(91, 140, 255, 0.15);
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+.retry:hover { background: rgba(91, 140, 255, 0.28); }
+
 /* ---------------- 文件列表 ---------------- */
 .section-head {
   display: flex;

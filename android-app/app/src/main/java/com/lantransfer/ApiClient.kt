@@ -1,50 +1,47 @@
 package com.lantransfer
 
 import android.content.Context
-import android.util.Base64
 import android.util.Log
 import org.json.JSONObject
-import java.io.ByteArrayInputStream
+import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
-import java.security.KeyFactory
-import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.cert.CertificateException
-import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
-import java.security.spec.PKCS8EncodedKeySpec
 import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.HttpsURLConnection
-import javax.net.ssl.KeyManager
-import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
 /**
- * 局域网互传 API 客户端（mTLS 双向认证 + TOFU 证书指纹固定）。
+ * 局域网互传 API 客户端（HTTPS + TOFU 证书指纹固定）。
  *
  * 安全策略：
- *  1. 客户端证书认证（mTLS）：App 内置客户端证书，服务器只接受持证客户端。
- *     浏览器没有这份证书，TLS 握手阶段即被断开，无法访问任何接口。
+ *  1. 只允许 HTTPS，口令随每次请求携带，服务端校验。
  *  2. TOFU 指纹固定：首次连接记录服务器证书 SHA-256 指纹，
- *     之后指纹变化（中间人攻击或电脑端重装证书）立即拒绝连接。
+ *     之后指纹变化（中间人攻击或电脑端证书重建）立即拒绝连接，
+ *     用户可在界面上确认后清除旧指纹重连。
  */
 class ApiClient(baseUrl: String, private val token: String, context: Context) {
 
     companion object {
         private const val TAG = "ApiClient"
         const val ERR_CERT_CHANGED = "CERT_CHANGED"
-        private const val KEYSTORE_PASS = "lan-transfer"  // 内存密钥库密码，不落盘
     }
 
     /** 统一为 https:// 前缀，去掉末尾斜杠 */
     private val baseUrl: String = baseUrl.trim().removeSuffix("/").let {
-        if (it.startsWith("http")) it else "https://$it"
+        when {
+            it.startsWith("https://") -> it
+            it.startsWith("http://") -> "https://" + it.removePrefix("http://")
+            else -> "https://$it"
+        }
     }
 
     private val pins = context.applicationContext
@@ -55,12 +52,17 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
     var lastError: String? = null
         private set
 
+    /** 最近一次失败是否由证书指纹变化引起 */
+    var pinMismatch: Boolean = false
+        private set
+
     // ------------------------------------------------------------------
     // TrustManager：TOFU 证书指纹固定
     // ------------------------------------------------------------------
     private inner class PinnedTrustManager : X509TrustManager {
         override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
         override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+
         override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
             val leaf = chain.firstOrNull()
                 ?: throw CertificateException("服务器未提供证书")
@@ -71,8 +73,10 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
                     pins.edit().putString(hostKey, fp).apply()
                     Log.i(TAG, "已固定 $hostKey 证书指纹: $fp")
                 }
-                !saved.equals(fp, ignoreCase = true) ->
+                !saved.equals(fp, ignoreCase = true) -> {
+                    pinMismatch = true
                     throw CertificateException(ERR_CERT_CHANGED)
+                }
             }
         }
     }
@@ -82,49 +86,20 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
         return md.digest(bytes).joinToString(":") { "%02X".format(it) }
     }
 
-    // ------------------------------------------------------------------
-    // KeyManager：从 assets 加载内置客户端证书（供服务端 mTLS 校验）
-    // ------------------------------------------------------------------
-    private fun loadClientKeyManagers(appContext: Context): Array<KeyManager>? {
-        return try {
-            val certPem = appContext.assets.open("client-cert.pem").use { it.readBytes() }
-            val keyPem = appContext.assets.open("client-key.pem").use { it.readBytes() }
-
-            val cert = CertificateFactory.getInstance("X.509")
-                .generateCertificate(ByteArrayInputStream(certPem)) as X509Certificate
-
-            val b64 = keyPem.decodeToString()
-                .replace("-----BEGIN PRIVATE KEY-----", "")
-                .replace("-----END PRIVATE KEY-----", "")
-                .replace(Regex("\\s"), "")
-            val keyBytes = Base64.decode(b64, Base64.DEFAULT)
-            val privateKey = KeyFactory.getInstance("RSA")
-                .generatePrivate(PKCS8EncodedKeySpec(keyBytes))
-
-            val ks = KeyStore.getInstance("PKCS12")
-            ks.load(null, null)
-            ks.setKeyEntry("client", privateKey, KEYSTORE_PASS.toCharArray(), arrayOf(cert))
-
-            val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
-            kmf.init(ks, KEYSTORE_PASS.toCharArray())
-            kmf.keyManagers
-        } catch (e: Exception) {
-            Log.e(TAG, "加载客户端证书失败", e)
-            null
-        }
+    /** 清除本机的证书指纹记录（电脑端证书重建后使用） */
+    fun resetPin() {
+        pins.edit().remove(hostKey).apply()
+        pinMismatch = false
     }
 
-    private val clientKeyManagers: Array<KeyManager>? =
-        loadClientKeyManagers(context.applicationContext)
-
     private val sslContext: SSLContext = SSLContext.getInstance("TLS").apply {
-        init(clientKeyManagers, arrayOf<TrustManager>(PinnedTrustManager()), SecureRandom())
+        init(null, arrayOf<TrustManager>(PinnedTrustManager()), SecureRandom())
     }
 
     // ------------------------------------------------------------------
     // 连接工厂
     // ------------------------------------------------------------------
-    /** 打开连接；HTTPS 时应用 mTLS + 指纹固定。主机名校验由指纹固定替代（证书无 IP SAN）。 */
+    /** 打开连接；HTTPS 时应用指纹固定。主机名校验由指纹固定替代（证书无 IP SAN）。 */
     fun open(url: String): HttpURLConnection {
         val conn = URL(url).openConnection() as HttpURLConnection
         if (conn is HttpsURLConnection) {
@@ -154,7 +129,7 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
 
         try {
             if (conn.responseCode != 200) {
-                lastError = "服务器返回 ${conn.responseCode}"
+                lastError = httpError(conn.responseCode)
                 return emptyList()
             }
             val body = conn.inputStream.bufferedReader().use { it.readText() }
@@ -180,32 +155,51 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
         }
     }
 
-    fun uploadFile(name: String, inputStream: InputStream, size: Long): Boolean {
+    /**
+     * 上传文件，onProgress(sentBytes, totalBytes) 会随上传进度回调。
+     */
+    fun uploadFile(
+        name: String,
+        inputStream: InputStream,
+        size: Long,
+        onProgress: (Long, Long) -> Unit = { _, _ -> }
+    ): Boolean {
+        lastError = null
+        pinMismatch = false
+        if (size <= 0) {
+            lastError = "无法读取文件大小，请换一个文件重试"
+            return false
+        }
         val encoded = URLEncoder.encode(name, "UTF-8")
         val conn = open(buildUrl("api/upload", "name=$encoded"))
         conn.requestMethod = "POST"
         conn.doOutput = true
         conn.connectTimeout = 30000
-        conn.readTimeout = 30000
+        conn.readTimeout = 60000
         conn.setRequestProperty("Content-Type", "application/octet-stream")
         conn.setRequestProperty("Content-Length", size.toString())
-        lastError = null
 
         try {
             inputStream.use { stream ->
                 conn.outputStream.use { os ->
                     val buf = ByteArray(65536)
-                    var remaining = size
-                    while (remaining > 0) {
-                        val read = stream.read(buf, 0, minOf(buf.size, remaining.toInt()))
+                    var sent = 0L
+                    onProgress(0L, size)
+                    while (sent < size) {
+                        val read = stream.read(buf, 0, minOf(buf.size.toLong(), size - sent).toInt())
                         if (read <= 0) break
                         os.write(buf, 0, read)
-                        remaining -= read
+                        sent += read
+                        onProgress(sent, size)
+                    }
+                    if (sent < size) {
+                        lastError = "文件读取中断（已发送 $sent / $size 字节）"
+                        return false
                     }
                 }
             }
             if (conn.responseCode != 200) {
-                lastError = "服务器返回 ${conn.responseCode}"
+                lastError = httpError(conn.responseCode)
                 return false
             }
             val body = conn.inputStream.bufferedReader().use { it.readText() }
@@ -214,6 +208,60 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
             lastError = errorText(e)
             Log.e(TAG, "upload failed", e)
             return false
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /**
+     * 下载文件到 dest，onProgress(downloadedBytes, totalBytes) 随进度回调。
+     * 失败时删除未完成的文件，方便直接重试。
+     */
+    fun downloadFile(
+        name: String,
+        dest: File,
+        onProgress: (Long, Long) -> Unit = { _, _ -> }
+    ): Boolean {
+        lastError = null
+        pinMismatch = false
+        val encoded = URLEncoder.encode(name, "UTF-8")
+        val conn = open(buildUrl("download", "name=$encoded"))
+        conn.requestMethod = "GET"
+        conn.connectTimeout = 15000
+        conn.readTimeout = 60000
+
+        return try {
+            if (conn.responseCode != 200) {
+                lastError = httpError(conn.responseCode)
+                return false
+            }
+            val total = conn.contentLengthLong.takeIf { it > 0 } ?: -1L
+            var done = 0L
+            conn.inputStream.use { input ->
+                FileOutputStream(dest).use { os ->
+                    val buf = ByteArray(65536)
+                    onProgress(0L, total)
+                    while (true) {
+                        val read = input.read(buf)
+                        if (read <= 0) break
+                        os.write(buf, 0, read)
+                        done += read
+                        onProgress(done, total)
+                    }
+                }
+            }
+            if (total > 0 && done < total) {
+                dest.delete()
+                lastError = "下载中断（$done / $total 字节），可点重试"
+                false
+            } else {
+                true
+            }
+        } catch (e: Exception) {
+            dest.delete()
+            lastError = errorText(e)
+            Log.e(TAG, "download failed", e)
+            false
         } finally {
             conn.disconnect()
         }
@@ -229,7 +277,7 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
 
         try {
             if (conn.responseCode != 200) {
-                lastError = "服务器返回 ${conn.responseCode}"
+                lastError = httpError(conn.responseCode)
                 return false
             }
             val body = conn.inputStream.bufferedReader().use { it.readText() }
@@ -243,27 +291,18 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
         }
     }
 
-    /** 打开下载连接（由调用方读取 inputStream 并 disconnect）。 */
-    fun openDownload(name: String): HttpURLConnection {
-        val encoded = URLEncoder.encode(name, "UTF-8")
-        val conn = open(buildUrl("download", "name=$encoded"))
-        conn.requestMethod = "GET"
-        conn.connectTimeout = 15000
-        conn.readTimeout = 60000
-        return conn
-    }
-
     fun testConnection(): Boolean {
+        lastError = null
+        pinMismatch = false
         return try {
-            lastError = null
             val conn = open(buildUrl("api/info"))
             conn.requestMethod = "GET"
             conn.connectTimeout = 5000
             conn.readTimeout = 5000
-            val ok = conn.responseCode == 200
-            if (!ok) lastError = "服务器返回 ${conn.responseCode}"
+            val code = conn.responseCode
+            if (code != 200) lastError = httpError(code)
             conn.disconnect()
-            ok
+            code == 200
         } catch (e: Exception) {
             lastError = errorText(e)
             Log.e(TAG, "testConnection failed", e)
@@ -274,20 +313,27 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
     // ------------------------------------------------------------------
     // 错误翻译
     // ------------------------------------------------------------------
+    private fun httpError(code: Int): String = when (code) {
+        401, 403 -> "口令错误或已失效，请重新扫描电脑端二维码"
+        404 -> "服务器上找不到这个文件"
+        in 500..599 -> "电脑端处理失败（HTTP $code），请稍后重试"
+        else -> "服务器返回 HTTP $code"
+    }
+
     fun errorText(e: Throwable): String {
-        val msg = e.message ?: ""
-        val cause = e.cause?.message ?: ""
+        val msg = (e.message ?: "") + " " + (e.cause?.message ?: "")
         return when {
             msg.contains(ERR_CERT_CHANGED) ->
-                "电脑端证书已更换（可能是重装了程序）。请在 App 设置里清除本 App 数据后重试。"
-            msg.contains("certificate") || cause.contains("certificate") ||
-                msg.contains("handshake") || cause.contains("handshake") ->
-                "电脑端要求客户端证书（mTLS），但 App 证书加载失败。"
+                "电脑端的证书指纹变了（可能重装过程序）。确认是你自己的电脑后，点“清除并重连”。"
+            msg.contains("CLEARTEXT") || msg.contains("cleartext") ->
+                "电脑端没有启用 HTTPS，请在电脑端确认加密传输已开启后重试。"
+            msg.contains("certificate") || msg.contains("handshake") ->
+                "HTTPS 握手失败，请确认电脑端程序正在运行。"
             msg.contains("ConnectException") || msg.contains("SocketTimeout") ||
-                cause.contains("timeout") ->
-                "无法连接，请确认手机和电脑在同一 Wi-Fi，且电脑端程序正在运行。"
-            msg.contains("UnknownHost") -> "地址格式错误，应为 https://IP:端口"
-            else -> msg.ifBlank { cause.ifBlank { e.javaClass.simpleName } }
+                msg.contains("timeout") || msg.contains("Failed to connect") ->
+                "连不上，请确认手机和电脑在同一个 Wi-Fi，且电脑端程序已启动、防火墙允许访问。"
+            msg.contains("UnknownHost") -> "地址格式错误，应形如 https://192.168.1.10:8765"
+            else -> msg.trim().ifBlank { e.javaClass.simpleName }
         }
     }
 }

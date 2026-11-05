@@ -15,6 +15,7 @@
 """
 
 import argparse
+import hmac
 import html
 import json
 import mimetypes
@@ -51,12 +52,17 @@ def get_resource_dir():
 BASE_DIR = get_base_dir()        # exe/脚本 所在目录
 RESOURCE_DIR = get_resource_dir()  # 静态资源所在目录（打包后在临时解压目录）
 STATIC_DIR = os.path.join(RESOURCE_DIR, "static")
-RECEIVE_DIR = os.path.join(BASE_DIR, "接收文件")   # 手机 → 电脑：上传落这里
-PUBLISH_DIR = os.path.join(BASE_DIR, "发布文件")   # 电脑 → 手机：拷进来可被下载
+RECEIVE_DIR = os.path.join(BASE_DIR, "received-files")  # 手机 → 电脑：上传落这里
+PUBLISH_DIR = os.path.join(BASE_DIR, "shared-files")    # 电脑 → 手机：拷进来可被下载
+LEGACY_DIRS = (("接收文件", RECEIVE_DIR), ("发布文件", PUBLISH_DIR))
 
 TOKEN = ""
 HOST_NAME = socket.gethostname()
 PORT = 8765
+PORT_REQUESTED = 8765
+PORT_IS_FALLBACK = False   # 默认端口被占用、已自动换端口
+BIND_ADDR = "0.0.0.0"
+BIND_LAN_ONLY = False      # True 表示只监听本机局域网 IP
 BUF_SIZE = 1024 * 1024
 USE_TLS = False  # run() 启动时根据证书可用性更新
 SCHEME = "http"
@@ -217,6 +223,48 @@ def local_ip() -> str:
     return sorted(candidates, key=score)[0]
 
 
+def is_lan_ip(ip: str) -> bool:
+    """判断是否是常见局域网私有地址（不用于安全校验，仅做展示提示）。"""
+    return ip.startswith(("10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.",
+                          "172.2", "172.30.", "172.31."))
+
+
+def access_host() -> str:
+    """浏览器/手机应访问的主机地址：优先实际监听地址，否则回环。"""
+    if BIND_ADDR and BIND_ADDR not in ("0.0.0.0", "::", ""):
+        return BIND_ADDR
+    return "127.0.0.1"
+
+
+def build_url(host: str = None) -> str:
+    """生成带口令的访问链接。"""
+    target = host or access_host()
+    return "%s://%s:%d/?k=%s" % (SCHEME, target, PORT, TOKEN)
+
+
+def migrate_legacy_dirs() -> None:
+    """把旧版中文目录（接收文件 / 发布文件）迁移到英文目录，避免历史文件丢失。"""
+    import shutil
+    for old_name, new_dir in LEGACY_DIRS:
+        old_dir = os.path.join(BASE_DIR, old_name)
+        if not os.path.isdir(old_dir):
+            continue
+        try:
+            if not os.path.isdir(new_dir):
+                os.rename(old_dir, new_dir)
+                log("  已迁移目录: %s -> %s" % (old_name, os.path.basename(new_dir)))
+                continue
+            for entry in list(os.scandir(old_dir)):
+                if not entry.is_file():
+                    continue
+                dest = os.path.join(new_dir, unique_name(entry.name, new_dir))
+                shutil.move(entry.path, dest)
+            os.rmdir(old_dir)
+            log("  已合并旧目录: %s" % old_name)
+        except OSError as exc:
+            log("  [警告] 旧目录迁移失败: %s" % exc)
+
+
 def list_files(base_dir) -> list:
     """列出 base_dir 里的文件，返回带 source 标记的列表。"""
     items = []
@@ -275,12 +323,22 @@ class Handler(BaseHTTPRequestHandler):
         self._send(status, json.dumps(data, ensure_ascii=False), "application/json; charset=utf-8")
 
     def _authorized(self, query):
+        token = ""
         cookie = self.headers.get("Cookie", "")
         for part in cookie.split(";"):
             key, _, value = part.strip().partition("=")
-            if key == "k" and value == TOKEN:
-                return True
-        return query.get("k", [""])[0] == TOKEN
+            if key == "k":
+                token = value
+                break
+        if not token:
+            token = query.get("k", [""])[0]
+        # 常量时间比较，避免通过响应耗时猜测口令
+        if not token or not TOKEN:
+            return False
+        try:
+            return hmac.compare_digest(token, TOKEN)
+        except TypeError:  # 口令里含非 ASCII 字符
+            return False
 
     def _deny(self):
         page = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
@@ -398,9 +456,10 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         except OSError:
             self._send(500, "缺少 static/index.html")
             return
-        extra = {
-            "Set-Cookie": "k=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400" % TOKEN,
-        }
+        cookie = "k=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400" % TOKEN
+        if USE_TLS:
+            cookie += "; Secure"
+        extra = {"Set-Cookie": cookie}
         self._send(200, body, "text/html; charset=utf-8", extra)
 
     def _serve_static(self, name):
@@ -420,19 +479,22 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
     # ---------------------------- 信息 ---------------------------- #
     def _info(self):
         ip = local_ip()
-        share_url = "%s://%s:%d/?k=%s" % (SCHEME, ip, PORT, TOKEN)
         pub_files = list_files(PUBLISH_DIR)
         recv_files = list_files(RECEIVE_DIR)
         return {
             "host": HOST_NAME,
             "ip": ip,
             "port": PORT,
+            "port_requested": PORT_REQUESTED,
             "https": USE_TLS,
             "fingerprint": cert_fingerprint() if USE_TLS else "",
-            "share_url": share_url,
-            "local_url": "%s://127.0.0.1:%d/?k=%s" % (SCHEME, PORT, TOKEN),
+            "share_url": build_url(ip),
+            "local_url": build_url(),
+            "storage": RECEIVE_DIR,
             "publish_dir": PUBLISH_DIR,
             "receive_dir": RECEIVE_DIR,
+            "lan_only": BIND_LAN_ONLY,
+            "port_changed": PORT_IS_FALLBACK,
             "publish_count": len(pub_files),
             "receive_count": len(recv_files),
             "publish_size": sum(item["size"] for item in pub_files),
@@ -585,21 +647,52 @@ def banner(url: str, ip_url: str) -> None:
 
 
 def run(port: int, open_browser: bool, bind: str) -> ThreadingHTTPServer:
-    """启动服务并返回 server 对象，供 GUI 控制。"""
-    global PORT, USE_TLS, SCHEME
+    """启动服务并返回 server 对象，供 GUI 控制。
+
+    bind 说明：
+      "lan" / "auto" / ""  → 尽量只绑定本机局域网 IP（默认，不暴露到公网网卡）
+      具体 IP               → 绑定该地址
+      "0.0.0.0"            → 监听所有网卡（仅调试用）
+    端口被占用时在 port ~ port+11 范围内自动顺延，并置 PORT_IS_FALLBACK。
+    """
+    global PORT, PORT_REQUESTED, PORT_IS_FALLBACK, BIND_ADDR, BIND_LAN_ONLY
+    global USE_TLS, SCHEME
+    migrate_legacy_dirs()
     os.makedirs(RECEIVE_DIR, exist_ok=True)
     os.makedirs(PUBLISH_DIR, exist_ok=True)
 
-    server = None
-    for candidate in range(port, port + 12):
-        try:
-            server = ThreadingHTTPServer((bind, candidate), Handler)
-            PORT = candidate
-            break
-        except OSError:
-            continue
+    PORT_REQUESTED = port
+    BIND_LAN_ONLY = False
+    lan_ip = local_ip()
+    if bind in ("lan", "auto", ""):
+        if lan_ip and lan_ip != "127.0.0.1" and is_lan_ip(lan_ip):
+            bind = lan_ip
+            BIND_LAN_ONLY = True
+        else:
+            bind = "0.0.0.0"   # 没识别到局域网 IP 时才退化为监听全部网卡
+
+    def _open_server(host):
+        for candidate in range(port, port + 12):
+            try:
+                srv = ThreadingHTTPServer((host, candidate), Handler)
+                return srv, candidate
+            except OSError:
+                continue
+        return None, None
+
+    server, chosen = _open_server(bind)
+    if server is None and bind != "0.0.0.0":
+        # 指定网卡绑定失败（例如 IP 刚变化），退化为监听全部网卡
+        BIND_LAN_ONLY = False
+        bind = "0.0.0.0"
+        server, chosen = _open_server(bind)
     if server is None:
-        raise RuntimeError("端口 %d-%d 均被占用。" % (port, port + 11))
+        raise RuntimeError("端口 %d-%d 均被占用，请关闭占用程序或换一个端口。"
+                           % (port, port + 11))
+
+    BIND_ADDR = bind
+    PORT = chosen
+    PORT_IS_FALLBACK = chosen != port
 
     # 包装 TLS（证书可用时启用 HTTPS）
     tls = ensure_certificate()
@@ -622,9 +715,11 @@ def run(port: int, open_browser: bool, bind: str) -> ThreadingHTTPServer:
     server.serve_forever_thread.start()
 
     ip = local_ip()
-    web_url = "%s://127.0.0.1:%d/?k=%s" % (SCHEME, PORT, TOKEN)
-    share_url = "%s://%s:%d/?k=%s" % (SCHEME, ip, PORT, TOKEN)
+    web_url = build_url()
+    share_url = build_url(ip)
 
+    if PORT_IS_FALLBACK:
+        log("  [提示] 默认端口 %d 被占用，已自动改用 %d。" % (port, PORT))
     banner(web_url, share_url)
 
     if open_browser:
@@ -642,7 +737,8 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="局域网文件互传")
     parser.add_argument("--port", type=int, default=8765, help="服务端口，默认 8765")
-    parser.add_argument("--bind", default="0.0.0.0", help="监听地址，默认 0.0.0.0")
+    parser.add_argument("--bind", default="lan",
+                        help="监听地址，默认 lan（仅本机局域网 IP）；也可填具体 IP")
     parser.add_argument("--open", action="store_true", help="启动后自动打开电脑端页面")
     args = parser.parse_args()
 

@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title 局域网互传
+title LAN Transfer
 cd /d "%~dp0"
 
 where python >nul 2>nul

@@ -10,6 +10,11 @@ $env:ANDROID_HOME = "$root\android-sdk"
 $env:ANDROID_SDK_ROOT = $env:ANDROID_HOME
 $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
 
+# Kotlin 编译守护进程默认写入 %LOCALAPPDATA%\kotlin，部分安全软件/权限策略会导致
+# "AccessDenied" 导致编译失败；这里只对本进程重定向到工作区，不改系统环境变量。
+$env:LOCALAPPDATA = "$root\.build-cache\localappdata"
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\kotlin\daemon" | Out-Null
+
 Write-Host "[1/2] 编译 APK ..." -ForegroundColor Cyan
 & "$root\gradle\gradle-8.5\bin\gradle.bat" assembleDebug --no-daemon -p $app
 if ($LASTEXITCODE -ne 0) { throw "编译失败" }
@@ -23,7 +28,8 @@ $keypass   = (($credLines | Where-Object { $_ -match '^keypass:' })   -replace '
 $alias     = (($credLines | Where-Object { $_ -match '^alias:' })     -replace '^alias:\s*', '').Trim()
 
 $src = "$app\app\build\outputs\apk\debug\app-debug.apk"
-$out = "$app\lan-transfer.apk"
+New-Item -ItemType Directory -Force "$root\release" | Out-Null
+$out = "$root\release\lan-transfer-android.apk"
 if (Test-Path $out) { Remove-Item $out -Force }
 
 & "$env:ANDROID_HOME\build-tools\34.0.0\apksigner.bat" sign `

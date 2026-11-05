@@ -71,19 +71,27 @@
   // --------------------------- 数据 --------------------------- //
   function loadInfo() {
     return fetch("/api/info", { cache: "no-store" })
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (r.status === 403) throw new Error("unauthorized");
+        return r.json();
+      })
       .then(function (info) {
         state.info = info;
-        el.deviceInfo.textContent = info.host + " · " + info.ip + ":" + info.port;
-        el.storageInfo.textContent = "保存目录：" + info.storage;
+        var portTip = info.port_changed
+          ? " · 已从 " + info.port_requested + " 自动换到 " + info.port
+          : "";
+        el.deviceInfo.textContent = info.host + " · " + info.ip + ":" + info.port + portTip;
+        el.storageInfo.textContent = "接收目录：" + (info.storage || info.receive_dir || "—");
         el.shareUrl.textContent = info.share_url;
         if (info.share_url) {
           renderQr(info.share_url);
           el.connectCard.hidden = false;
         }
       })
-      .catch(function () {
-        el.deviceInfo.textContent = "连接服务失败";
+      .catch(function (err) {
+        el.deviceInfo.textContent = err && err.message === "unauthorized"
+          ? "访问口令无效，请重新扫描电脑端二维码"
+          : "连接服务失败";
       });
   }
 
@@ -100,13 +108,16 @@
 
   function loadFiles(silent) {
     return fetch("/api/files", { cache: "no-store" })
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (r.status === 403) throw new Error("口令已失效，请重新扫描电脑端二维码");
+        return r.json();
+      })
       .then(function (data) {
         state.files = data.files || [];
         renderFiles();
       })
-      .catch(function () {
-        if (!silent) toast("获取文件列表失败", true);
+      .catch(function (err) {
+        if (!silent) toast((err && err.message) || "获取文件列表失败", true);
       });
   }
 
@@ -216,36 +227,71 @@
   }
 
   // --------------------------- 上传 --------------------------- //
-  function uploadOne(file) {
+  function createUploadItem(file) {
+    var item = document.createElement("div");
+    item.className = "up-item";
+
+    var head = document.createElement("div");
+    head.className = "up-head";
+    var name = document.createElement("span");
+    name.className = "up-name";
+    name.textContent = file.name;
+    var pct = document.createElement("span");
+    pct.className = "up-pct";
+    pct.textContent = "0%";
+    head.appendChild(name);
+    head.appendChild(pct);
+
+    var bar = document.createElement("div");
+    bar.className = "bar";
+    var fill = document.createElement("i");
+    bar.appendChild(fill);
+
+    var meta = document.createElement("div");
+    meta.className = "up-meta";
+    meta.textContent = formatSize(file.size) + " · 等待中";
+
+    item.appendChild(head);
+    item.appendChild(bar);
+    item.appendChild(meta);
+    el.uploadList.appendChild(item);
+    return item;
+  }
+
+  function markFailed(item, message, file) {
+    item.classList.add("failed");
+    item.querySelector(".up-pct").textContent = "失败";
+    item.querySelector(".up-meta").textContent = message;
+
+    var head = item.querySelector(".up-head");
+    if (head.querySelector(".retry")) return;
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "retry";
+    btn.textContent = "重试";
+    btn.addEventListener("click", function () {
+      uploadOne(file, item);
+    });
+    head.appendChild(btn);
+  }
+
+  function uploadOne(file, item) {
+    item = item || createUploadItem(file);
+    var head = item.querySelector(".up-head");
+    var pct = item.querySelector(".up-pct");
+    var fill = item.querySelector(".bar > i");
+    var meta = item.querySelector(".up-meta");
+    var name = item.querySelector(".up-name");
+
+    var oldRetry = head.querySelector(".retry");
+    if (oldRetry) oldRetry.remove();
+    item.classList.remove("done", "failed");
+    pct.textContent = "0%";
+    fill.style.width = "0%";
+    meta.textContent = formatSize(file.size) + " · 等待中";
+    el.uploadPanel.hidden = false;
+
     return new Promise(function (resolve) {
-      var item = document.createElement("div");
-      item.className = "up-item";
-
-      var head = document.createElement("div");
-      head.className = "up-head";
-      var name = document.createElement("span");
-      name.className = "up-name";
-      name.textContent = file.name;
-      var pct = document.createElement("span");
-      pct.className = "up-pct";
-      pct.textContent = "0%";
-      head.appendChild(name);
-      head.appendChild(pct);
-
-      var bar = document.createElement("div");
-      bar.className = "bar";
-      var fill = document.createElement("i");
-      bar.appendChild(fill);
-
-      var meta = document.createElement("div");
-      meta.className = "up-meta";
-      meta.textContent = formatSize(file.size) + " · 等待中";
-
-      item.appendChild(head);
-      item.appendChild(bar);
-      item.appendChild(meta);
-      el.uploadList.appendChild(item);
-
       var xhr = new XMLHttpRequest();
       xhr.open("POST", "/api/upload?name=" + encodeURIComponent(file.name));
       xhr.setRequestHeader("Content-Type", "application/octet-stream");
@@ -272,17 +318,13 @@
           loadFiles(true);
           resolve(true);
         } else {
-          item.classList.add("failed");
-          pct.textContent = "失败";
-          meta.textContent = (data && data.error) ? data.error : "上传失败";
+          markFailed(item, (data && data.error) ? data.error : "上传失败，点重试", file);
           resolve(false);
         }
       };
 
       xhr.onerror = function () {
-        item.classList.add("failed");
-        pct.textContent = "失败";
-        meta.textContent = "网络中断，请检查 Wi-Fi";
+        markFailed(item, "网络中断，请检查 Wi-Fi 后点重试", file);
         resolve(false);
       };
 

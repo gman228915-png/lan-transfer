@@ -116,7 +116,19 @@
         android:textColor="#93a0c4"
         android:textSize="13sp"
         android:gravity="center"
-        android:layout_marginBottom="6dp" />
+        android:layout_marginBottom="4dp" />
+
+    <ProgressBar
+        android:id="@+id/progressBar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="4dp"
+        android:layout_marginStart="4dp"
+        android:layout_marginEnd="4dp"
+        android:layout_marginBottom="6dp"
+        android:max="100"
+        android:progressTint="#31d6b0"
+        android:visibility="gone" />
 
     <LinearLayout
         android:layout_width="match_parent"
