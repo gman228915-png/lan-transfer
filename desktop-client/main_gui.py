@@ -133,11 +133,15 @@ class LanTransferApp:
         pub_card = self._create_card(right, "发布文件（电脑 → 手机）")
         pub_card.pack(fill="x", pady=(0, 10))
 
+        tk.Label(pub_card, text="文件用「添加文件」，整目录用「添加文件夹」，两者都支持任意格式",
+                 bg="#1a1f36", fg="#8b97b5", font=("Segoe UI", 8)).pack(
+            anchor="w", padx=12, pady=(2, 4))
+
         pub_wrap = tk.Frame(pub_card, bg="#1a1f36")
-        pub_wrap.pack(fill="x", padx=10, pady=(2, 8))
+        pub_wrap.pack(fill="x", padx=10, pady=(0, 8))
 
         columns = ("name", "size")
-        self.pub_tree = ttk.Treeview(pub_wrap, columns=columns, show="headings", height=5)
+        self.pub_tree = ttk.Treeview(pub_wrap, columns=columns, show="headings", height=6)
         self._setup_tree(self.pub_tree, columns)
         pub_scroll = ttk.Scrollbar(pub_wrap, orient="vertical", command=self.pub_tree.yview)
         self.pub_tree.configure(yscroll=pub_scroll.set)
@@ -156,10 +160,6 @@ class LanTransferApp:
         self.btn_open_pub = self._make_btn(pub_btns, "打开文件夹",
                                            self._open_publish_folder)
         self.btn_open_pub.pack(side="right")
-
-        tk.Label(pub_card, text="「添加文件夹」只能选目录；零散文件请用「添加文件」",
-                 bg="#1a1f36", fg="#8b97b5", font=("Segoe UI", 8)).pack(
-            anchor="w", padx=12, pady=(0, 6))
 
         # ---------------- 右：接收文件 ----------------
         recv_card = self._create_card(right, "接收文件（手机 → 电脑）")
@@ -430,8 +430,8 @@ class LanTransferApp:
     def _add_publish_files(self):
         """添加文件到发布目录（后台复制，大文件不卡界面）。"""
         paths = filedialog.askopenfilenames(
-            title="选择要发布的文件",
-            # 默认「所有文件」，不按后缀过滤；其余仅为快捷筛选
+            title="选择要发布的文件（可多选）",
+            # 第一项即默认筛选项：「所有文件」，不按后缀过滤；其余仅为快捷筛选
             filetypes=[
                 ("所有文件", "*.*"),
                 ("常用文档", "*.txt *.md *.pdf *.doc *.docx *.ppt *.pptx "
@@ -445,38 +445,46 @@ class LanTransferApp:
         self._copy_to_dir(list(paths), lan_transfer.PUBLISH_DIR, "发布文件")
 
     def _add_publish_folder(self):
-        """把整个文件夹拷进发布目录（后台复制）。"""
-        src = filedialog.askdirectory(title="选择要发布的文件夹")
+        """把整个文件夹里的所有文件平铺发布到发布目录（后台复制，不按后缀过滤）。"""
+        src = filedialog.askdirectory(title="选择要发布的文件夹（整个目录一起发布）")
         if not src:
             return
 
-        parent, folder_name = os.path.split(src)
-        if not folder_name:
-            folder_name = "unnamed"
-        dest_root = os.path.join(lan_transfer.PUBLISH_DIR,
-                                 lan_transfer.unique_name(folder_name))
-        self._set_busy(True, "正在复制文件夹：%s …" % folder_name)
+        folder_name = os.path.basename(src.rstrip(os.sep)) or src
+        self._set_busy(True, "正在读取文件夹：%s …" % folder_name)
 
         def work():
             import shutil
-            error = None
-            try:
-                shutil.copytree(src, dest_root)
-            except Exception as exc:
-                error = str(exc)
-            self.root.after(0, lambda: self._folder_copy_done(folder_name, error))
+            count, errors = 0, []
+            # 递归遍历，任意后缀都发布；发布目录只支持单层文件，因此平铺
+            for root, _dirs, files in os.walk(src):
+                for name in files:
+                    path = os.path.join(root, name)
+                    try:
+                        dest = os.path.join(
+                            lan_transfer.PUBLISH_DIR,
+                            lan_transfer.unique_name(name, lan_transfer.PUBLISH_DIR))
+                        shutil.copy2(path, dest)
+                        count += 1
+                    except Exception as exc:
+                        errors.append("%s: %s" % (path, exc))
+            self.root.after(0, lambda: self._folder_copy_done(folder_name, count, errors))
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _folder_copy_done(self, folder_name, error):
+    def _folder_copy_done(self, folder_name, count, errors):
         self._set_busy(False)
         self._refresh_all()
-        if error:
-            messagebox.showerror("复制失败", error)
-        else:
-            messagebox.showinfo("完成",
-                                "已发布文件夹：%s\n\n注意：手机端会把文件夹下的每个文件单独列出。"
-                                % folder_name)
+        if errors:
+            messagebox.showwarning("部分失败", "\n".join(errors[:10]))
+        if count:
+            messagebox.showinfo(
+                "完成",
+                "已发布 %d 个文件\n\n来源文件夹：%s\n"
+                "目录内所有格式的文件都已加入发布列表，手机端可直接下载。"
+                % (count, folder_name))
+        elif not errors:
+            messagebox.showinfo("提示", "文件夹「%s」里没有文件。" % folder_name)
 
     def _copy_to_dir(self, paths, target_dir, label):
         """后台逐个复制文件，完成后回主线程刷新。"""
