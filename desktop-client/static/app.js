@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  var state = { files: [], uploading: false, info: null };
+  var state = { files: [], uploading: false, info: null, space: "" };
 
   var el = {
     deviceInfo: document.getElementById("deviceInfo"),
@@ -14,6 +14,7 @@
     fileCount: document.getElementById("fileCount"),
     emptyState: document.getElementById("emptyState"),
     search: document.getElementById("search"),
+    spaceSelect: document.getElementById("spaceSelect"),
     refreshBtn: document.getElementById("refreshBtn"),
     connectCard: document.getElementById("connectCard"),
     shareUrl: document.getElementById("shareUrl"),
@@ -69,6 +70,41 @@
   }
 
   // --------------------------- 数据 --------------------------- //
+  function spaceQuery() {
+    return state.space ? "&space=" + encodeURIComponent(state.space) : "";
+  }
+
+  function loadSpaces() {
+    return fetch("/api/spaces", { cache: "no-store" })
+      .then(function (r) {
+        if (r.status === 403) throw new Error("unauthorized");
+        return r.json();
+      })
+      .then(function (data) {
+        var spaces = data.spaces || [];
+        el.spaceSelect.innerHTML = "";
+        var all = document.createElement("option");
+        all.value = "";
+        all.textContent = "全部空间";
+        el.spaceSelect.appendChild(all);
+        spaces.forEach(function (space) {
+          var option = document.createElement("option");
+          option.value = space.name;
+          option.textContent = space.name + (space.mode === "ro" ? "（只读）" : "");
+          el.spaceSelect.appendChild(option);
+        });
+        if (state.space && !spaces.some(function (s) { return s.name === state.space; })) {
+          state.space = "";
+        }
+        el.spaceSelect.value = state.space;
+        el.spaceSelect.disabled = spaces.length <= 1;
+      })
+      .catch(function () {
+        el.spaceSelect.innerHTML = '<option value="">全部空间</option>';
+        el.spaceSelect.disabled = true;
+      });
+  }
+
   function loadInfo() {
     return fetch("/api/info", { cache: "no-store" })
       .then(function (r) {
@@ -107,7 +143,8 @@
   }
 
   function loadFiles(silent) {
-    return fetch("/api/files", { cache: "no-store" })
+    return fetch("/api/files" + (state.space ? "?space=" + encodeURIComponent(state.space) : ""),
+                 { cache: "no-store" })
       .then(function (r) {
         if (r.status === 403) throw new Error("口令已失效，请重新扫描电脑端二维码");
         return r.json();
@@ -152,6 +189,7 @@
     row.style.animationDelay = Math.min(index * 20, 200) + "ms";
 
     var encoded = encodeURIComponent(f.name);
+    var sq = f.space ? "&space=" + encodeURIComponent(f.space) : spaceQuery();
 
     var thumb = document.createElement("div");
     thumb.className = "thumb t-" + f.kind;
@@ -159,7 +197,7 @@
       var img = document.createElement("img");
       img.loading = "lazy";
       img.alt = "";
-      img.src = "/download?inline=1&name=" + encoded;
+      img.src = "/download?inline=1&name=" + encoded + sq;
       img.addEventListener("error", function () {
         img.remove();
         thumb.textContent = "IMG";
@@ -174,7 +212,7 @@
 
     var nameLink = document.createElement("a");
     nameLink.className = "file-name";
-    nameLink.href = "/download?inline=1&name=" + encoded;
+    nameLink.href = "/download?inline=1&name=" + encoded + sq;
     nameLink.target = "_blank";
     nameLink.rel = "noopener";
     nameLink.title = f.name;
@@ -182,7 +220,8 @@
 
     var meta = document.createElement("div");
     meta.className = "file-meta";
-    meta.textContent = formatSize(f.size) + " · " + formatTime(f.mtime);
+    meta.textContent = formatSize(f.size) + " · " + formatTime(f.mtime) +
+      (f.space && !state.space ? " · " + f.space : "");
 
     main.appendChild(nameLink);
     main.appendChild(meta);
@@ -192,7 +231,7 @@
 
     var dl = document.createElement("a");
     dl.className = "dl";
-    dl.href = "/download?name=" + encoded;
+    dl.href = "/download?name=" + encoded + sq;
     dl.title = "下载";
     dl.setAttribute("aria-label", "下载 " + f.name);
     dl.innerHTML = ICON_DOWNLOAD;
@@ -205,7 +244,7 @@
     del.innerHTML = ICON_TRASH;
     del.addEventListener("click", function () {
       if (!window.confirm("确定删除《" + f.name + "》吗？")) return;
-      fetch("/api/files?name=" + encoded, { method: "DELETE" })
+      fetch("/api/files?name=" + encoded + sq, { method: "DELETE" })
         .then(function (r) { return r.json(); })
         .then(function (res) {
           if (res.error) {
@@ -293,7 +332,7 @@
 
     return new Promise(function (resolve) {
       var xhr = new XMLHttpRequest();
-      xhr.open("POST", "/api/upload?name=" + encodeURIComponent(file.name));
+      xhr.open("POST", "/api/upload?name=" + encodeURIComponent(file.name) + spaceQuery());
       xhr.setRequestHeader("Content-Type", "application/octet-stream");
 
       xhr.upload.onprogress = function (e) {
@@ -411,12 +450,17 @@
 
     el.refreshBtn.addEventListener("click", function () {
       el.refreshBtn.classList.add("spinning");
-      Promise.all([loadInfo(), loadFiles(false)]).then(function () {
+      Promise.all([loadSpaces(), loadInfo(), loadFiles(false)]).then(function () {
         setTimeout(function () { el.refreshBtn.classList.remove("spinning"); }, 400);
       });
     });
 
     el.search.addEventListener("input", renderFiles);
+
+    el.spaceSelect.addEventListener("change", function () {
+      state.space = el.spaceSelect.value;
+      loadFiles(false);
+    });
 
     el.toggleQr.addEventListener("click", function () {
       var hidden = el.qrWrap.hidden;
@@ -457,6 +501,7 @@
       el.qrWrap.hidden = false;
       el.toggleQr.textContent = "收起";
     }
+    loadSpaces();
     loadInfo();
     loadFiles(true);
     setInterval(function () {

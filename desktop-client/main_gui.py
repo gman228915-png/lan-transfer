@@ -42,8 +42,8 @@ class LanTransferApp:
     def __init__(self, root):
         self.root = root
         self.root.title("局域网互传")
-        self.root.geometry("900x680")
-        self.root.minsize(860, 620)
+        self.root.geometry("920x720")
+        self.root.minsize(880, 660)
 
         self.server = None
         self._running = False
@@ -88,7 +88,7 @@ class LanTransferApp:
         info_card = self._create_card(left, "服务信息")
         info_card.pack(fill="x", pady=(0, 10))
 
-        self.info_text = tk.Text(info_card, height=9, bg="#1a1f36", fg="#c8d0e8",
+        self.info_text = tk.Text(info_card, height=12, bg="#1a1f36", fg="#c8d0e8",
                                  font=("Consolas", 9), relief="flat", wrap="word",
                                  borderwidth=0, padx=10, pady=6)
         self.info_text.pack(fill="x", padx=10, pady=(2, 8))
@@ -324,6 +324,12 @@ class LanTransferApp:
                 lan_transfer.PUBLISH_DIR,
                 lan_transfer.RECEIVE_DIR,
             )
+            if lan_transfer.SPACES:
+                space_lines = ["空间（%s）：" % lan_transfer.SPACES_FILE]
+                for name, space in lan_transfer.SPACES.items():
+                    space_lines.append("  %s [%s] %s" % (
+                        name, space["mode"], space["path"]))
+                info_text += "\n" + "\n".join(space_lines)
             self._set_info(info_text)
 
             self.url_label.config(text=self._share_url)
@@ -526,6 +532,10 @@ class LanTransferApp:
 
 def main():
     import traceback
+
+    # 无界面常驻模式（供 CLI / 其他程序 / AI 调用）
+    if "--headless" in sys.argv[1:]:
+        sys.exit(lan_transfer.headless_main(sys.argv[1:]))
 
     def handle_exception(exc_type, exc_value, exc_traceback):
         try:

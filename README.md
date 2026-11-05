@@ -13,11 +13,12 @@
 | 文件 | 用途 |
 |---|---|
 | `release/lan-transfer-desktop.exe` | Windows 电脑端，单文件绿色版，双击运行 |
+| `release/lan-transfer-cli.exe` | 命令行客户端（供脚本 / AI / 其他项目调用） |
 | `release/lan-transfer-android.apk` | 安卓安装包（Android 7.0 及以上） |
 | `release/shared-files/` | 电脑端共享目录（手机能看到、能下载的文件） |
 | `release/received-files/` | 手机上传到电脑的文件 |
 
-> `release/` 与两个大文件已在 `.gitignore` 中排除，不提交到 GitHub；请从发布页或本地构建获取。
+> `release/` 与构建产物已在 `.gitignore` 中排除，不提交到 GitHub；请从发布页或本地构建获取。
 
 ## 电脑端启动
 
@@ -55,9 +56,90 @@
 1. 手机浏览器扫描电脑二维码，或输入电脑窗口里显示的完整链接（**必须带 `?k=口令`**）。
 2. 电脑浏览器可直接点「打开网页」。
 3. 网页端支持点击/拖拽上传（带进度条、失败可重试）、下载、删除。
-4. 首次打开若提示证书不受信任（自签名证书），选择「继续访问 / 高级 → 继续前往」即可。
+4. 网页端右上角可切换**空间**（inbox / shared / 自定义空间），默认「全部空间」。
+5. 首次打开若提示证书不受信任（自签名证书），选择「继续访问 / 高级 → 继续前往」即可。
 
 > 地址和口令从哪里看？都在**电脑端窗口**的「服务信息」和二维码区域里；网页端的连接卡片里也会显示当前链接。
+
+## 给程序 / AI 当传输通道（Headless + CLI）
+
+除了给人点界面，也可以把它当成本地局域网的「文件传输 API」：
+
+### 无界面常驻
+
+```powershell
+# 源码运行
+python desktop-client\lan_transfer.py --headless --port 8765 --token-file token.txt `
+    --spaces-file spaces.yaml --data-dir D:\lan-transfer-data --log-file service.log
+
+# 或用打包好的 exe
+release\lan-transfer-desktop.exe --headless --port 8765 --token-file token.txt
+```
+
+- 首次运行若 `--token-file` 不存在，会**自动生成**并写入该文件。
+- 写 PID 文件 `lan-transfer.pid`，结构化日志按天切分（`logs/service-YYYY-MM-DD.log`）。
+- `Ctrl+C` / SIGINT / SIGTERM / SIGBREAK 触发优雅退出并清理 PID。
+- 端口被占用时仍会自动顺延，`/api/health` 会返回 `port_fallback` 和实际端口。
+
+### 命令行客户端
+
+```powershell
+# 查看服务状态（不需要口令）
+release\lan-transfer-cli.exe health --server https://10.0.0.5:8765 --json
+
+# 查看空间
+release\lan-transfer-cli.exe spaces --server https://10.0.0.5:8765 --token-file token.txt
+
+# 上传多个文件 + 整个目录（-r），上传后自动校验 sha256
+release\lan-transfer-cli.exe put .\a.txt .\docs -r --space shared `
+    --server https://10.0.0.5:8765 --token-file token.txt --json
+
+# 下载到指定目录并校验 sha256
+release\lan-transfer-cli.exe get report.pdf -o .\downloads `
+    --server https://10.0.0.5:8765 --token-file token.txt --json
+
+# 列出 / 删除
+release\lan-transfer-cli.exe ls --space shared --server https://10.0.0.5:8765 --token-file token.txt
+release\lan-transfer-cli.exe rm old.txt --server https://10.0.0.5:8765 --token-file token.txt
+```
+
+- 直接跑源码也行：`python desktop-client\lan_transfer_cli.py ...`
+- `--json` 输出适合程序解析（含 `sha256`、`bytes`、`elapsed_ms`）。
+- 退出码：`0` 成功、`1` 失败、`2` 参数错误、`3` 口令/权限、`4` 网络、`5` sha256 不一致、`6` 不存在。
+- 断点续传参数 `--resume` 已预留，当前会完整下载。
+- 完整接口见 [docs/api.md](docs/api.md)。
+
+## 多空间（项目隔离）
+
+`spaces.yaml` 用于把不同项目/用途的目录隔离开，每个空间可独立设置只读与口令：
+
+```yaml
+default_space: inbox
+
+spaces:
+  - name: inbox
+    path: received-files
+    mode: rw
+    description: 手机或其他设备上传到这里
+  - name: shared
+    path: shared-files
+    mode: rw
+    description: 电脑端发布、供其他设备下载
+  - name: project-a
+    path: D:\project-a\transfer
+    mode: rw
+    token: project-a-token      # 只允许持有该口令的调用方访问
+    description: A 项目专用
+  - name: archive
+    path: D:\archive\transfer
+    mode: ro                     # 只读：可下载，上传/删除返回 403
+```
+
+- 配置文件默认是程序目录下的 `spaces.yaml`，首次启动自动生成示例，老用户升级无感。
+- 也支持 JSON：`--spaces-file spaces.json`。
+- 服务端只允许访问配置里列出的目录，文件名只允许单层，越界路径直接拒绝。
+- 全局口令可以访问所有空间；空间独立 `token` 只能访问自己的空间。
+- 电脑端窗口会显示空间列表与各自目录；网页端右上角可切换空间；安卓端当前固定使用默认空间。
 
 ## 常见问题（FAQ）
 
@@ -94,8 +176,11 @@
 ## 安全说明
 
 - **只监听局域网**：电脑端默认只绑定当前局域网 IP，不监听公网网卡；也可用 `--bind` 指定地址。
-- **口令校验**：所有页面/接口都要求 `?k=口令` 或同名 Cookie，口令每次启动随机生成，比较时使用常量时间算法。
-- **路径穿越防护**：上传/下载/删除的文件名都会清洗，只允许操作发布/接收目录内的普通文件。
+- **口令校验**：所有页面/接口都要求 `?k=口令`、Cookie 或 `Authorization: Bearer`，比较使用常量时间算法。
+- **多空间隔离**：只允许访问 `spaces.yaml` 里配置的目录；空间可设只读或独立口令，越权请求返回 403。
+- **路径穿越防护**：上传/下载/删除的文件名都会清洗成单层文件名，并校验解析后的真实路径仍在空间目录内。
+- **审计日志**：每次上传都记录时间、空间、文件名、字节数、来源 IP、成功/失败与 sha256，
+  按天写入 `logs/upload-audit-YYYY-MM-DD.log`。
 - **传输加密**：证书存在时启用 HTTPS（自签名）；手机端固定证书指纹，指纹变化会提示确认。
 - **不做公网穿透**：本工具不连接任何云端服务器，数据只在局域网内直传。
 
@@ -105,11 +190,14 @@
 .
 ├── desktop-client/                  # 电脑端（Python 3 + Tkinter）
 │   ├── main_gui.py                  # 桌面 GUI
-│   ├── lan_transfer.py              # 核心服务（HTTP/HTTPS、上传下载、口令校验）
+│   ├── lan_transfer.py              # 核心服务（HTTP/HTTPS、空间、上传下载、口令校验、headless）
+│   ├── lan_transfer_cli.py          # 命令行客户端（put/get/ls/rm/spaces/health）
 │   ├── static/                      # 网页端（index.html / app.js / style.css / qrcode.js）
 │   ├── gen_mtls.py                  # 生成自签名证书（可选）
 │   ├── run_desktop.bat              # 免打包，直接源码运行
-│   └── lan-transfer-desktop.spec    # PyInstaller 打包配置
+│   ├── lan-transfer-desktop.spec    # 桌面端 PyInstaller 配置
+│   └── lan-transfer-cli.spec        # 命令行 PyInstaller 配置
+├── docs/api.md                      # HTTP / API 契约文档
 ├── android-app/                     # 安卓端（Kotlin，Gradle 构建）
 │   ├── app/src/main/…               # 源码、布局、资源
 │   └── build_apk.ps1                # 一键编译 + 签名，输出到 release
@@ -133,6 +221,9 @@
 cd desktop-client
 python -m PyInstaller lan-transfer-desktop.spec --clean --noconfirm
 copy dist\lan-transfer-desktop.exe ..\release\lan-transfer-desktop.exe
+
+python -m PyInstaller lan-transfer-cli.spec --clean --noconfirm
+copy dist\lan-transfer-cli.exe ..\release\lan-transfer-cli.exe
 ```
 
 依赖：Python 3.9+、`pyinstaller`、`qrcode`、`Pillow`、`cryptography`（HTTPS 可选）。

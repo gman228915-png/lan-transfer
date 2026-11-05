@@ -50,7 +50,10 @@
   <section class="files">
     <div class="section-head">
       <h2>可下载文件 <span class="count" id="fileCount">0</span></h2>
-      <input id="search" class="search" type="search" placeholder="搜索文件" autocomplete="off">
+      <div class="head-tools">
+        <select id="spaceSelect" class="space-select" aria-label="选择空间" title="选择空间"></select>
+        <input id="search" class="search" type="search" placeholder="搜索文件" autocomplete="off">
+      </div>
     </div>
     <div id="fileList" class="file-list"></div>
     <div id="emptyState" class="empty">

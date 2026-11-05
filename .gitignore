@@ -35,6 +35,14 @@ desktop-client/接收文件/
 desktop-client/shared-files/
 desktop-client/received-files/
 *.part
+*.pid
+logs/
+spaces.yaml
+spaces.json
+token.txt
+desktop-client/spaces.yaml
+desktop-client/spaces.json
+desktop-client/token.txt
 
 # ============================================================
 # 证书与私钥（敏感信息，不入库）
