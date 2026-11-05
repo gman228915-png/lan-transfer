@@ -155,6 +155,10 @@ class LanTransferApp:
                                            self._open_publish_folder)
         self.btn_open_pub.pack(side="right")
 
+        tk.Label(pub_card, text="「添加文件夹」只能选目录；零散文件请用「添加文件」",
+                 bg="#1a1f36", fg="#8b97b5", font=("Segoe UI", 8)).pack(
+            anchor="w", padx=12, pady=(0, 6))
+
         # ---------------- 右：接收文件 ----------------
         recv_card = self._create_card(right, "接收文件（手机 → 电脑）")
         recv_card.pack(fill="both", expand=True)
@@ -423,7 +427,17 @@ class LanTransferApp:
 
     def _add_publish_files(self):
         """添加文件到发布目录（后台复制，大文件不卡界面）。"""
-        paths = filedialog.askopenfilenames(title="选择要发布的文件")
+        paths = filedialog.askopenfilenames(
+            title="选择要发布的文件",
+            # 默认「所有文件」，不按后缀过滤；其余仅为快捷筛选
+            filetypes=[
+                ("所有文件", "*.*"),
+                ("常用文档", "*.txt *.md *.pdf *.doc *.docx *.ppt *.pptx "
+                            "*.xls *.xlsx *.csv *.json"),
+                ("图片", "*.jpg *.jpeg *.png *.gif *.webp *.bmp *.heic"),
+                ("音视频", "*.mp3 *.wav *.m4a *.mp4 *.mov *.mkv *.avi *.webm"),
+                ("压缩包", "*.zip *.rar *.7z *.tar *.gz"),
+            ])
         if not paths:
             return
         self._copy_to_dir(list(paths), lan_transfer.PUBLISH_DIR, "发布文件")
