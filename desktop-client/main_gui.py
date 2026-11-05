@@ -42,8 +42,8 @@ class LanTransferApp:
     def __init__(self, root):
         self.root = root
         self.root.title("局域网互传")
-        self.root.geometry("920x720")
-        self.root.minsize(880, 660)
+        self.root.geometry("1080x780")
+        self.root.minsize(1020, 740)
 
         self.server = None
         self._running = False
@@ -57,7 +57,7 @@ class LanTransferApp:
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
         # 顶部标题栏
-        header = tk.Frame(self.root, bg="#1a1f36", height=66)
+        header = tk.Frame(self.root, bg="#1a1f36", height=58)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
 
@@ -77,18 +77,18 @@ class LanTransferApp:
         body = tk.Frame(self.root, bg="#0f1425")
         body.pack(fill="both", expand=True)
 
-        left = tk.Frame(body, bg="#0f1425", width=350)
-        left.pack(side="left", fill="y", padx=(14, 7), pady=12)
+        left = tk.Frame(body, bg="#0f1425", width=360)
+        left.pack(side="left", fill="y", padx=(14, 7), pady=6)
         left.pack_propagate(False)
 
         right = tk.Frame(body, bg="#0f1425")
-        right.pack(side="left", fill="both", expand=True, padx=(7, 14), pady=12)
+        right.pack(side="left", fill="both", expand=True, padx=(7, 14), pady=6)
 
         # ---------------- 左：服务信息 ----------------
         info_card = self._create_card(left, "服务信息")
         info_card.pack(fill="x", pady=(0, 10))
 
-        self.info_text = tk.Text(info_card, height=12, bg="#1a1f36", fg="#c8d0e8",
+        self.info_text = tk.Text(info_card, height=6, bg="#1a1f36", fg="#c8d0e8",
                                  font=("Consolas", 9), relief="flat", wrap="word",
                                  borderwidth=0, padx=10, pady=6)
         self.info_text.pack(fill="x", padx=10, pady=(2, 8))
@@ -96,7 +96,7 @@ class LanTransferApp:
         self.info_text.config(state="disabled")
 
         info_btns = tk.Frame(info_card, bg="#1a1f36")
-        info_btns.pack(fill="x", padx=10, pady=(0, 10))
+        info_btns.pack(fill="x", padx=10, pady=(0, 8))
 
         self.btn_toggle = self._make_btn(info_btns, "启动服务", self._toggle_server, primary=True)
         self.btn_toggle.pack(side="left", padx=(0, 6))
@@ -104,10 +104,10 @@ class LanTransferApp:
         self.btn_open_browser.pack(side="left")
 
         info_btns2 = tk.Frame(info_card, bg="#1a1f36")
-        info_btns2.pack(fill="x", padx=10, pady=(0, 10))
+        info_btns2.pack(fill="x", padx=10, pady=(0, 6))
         self.btn_copy_url = self._make_btn(info_btns2, "复制链接", self._copy_url)
         self.btn_copy_url.pack(side="left", padx=(0, 6))
-        self.btn_open_pub_top = self._make_btn(info_btns2, "打开发布文件夹",
+        self.btn_open_pub_top = self._make_btn(info_btns2, "打开文件夹",
                                               self._open_publish_folder)
         self.btn_open_pub_top.pack(side="left")
 
@@ -123,12 +123,9 @@ class LanTransferApp:
         self.qr_label.pack(expand=True)
 
         self.url_label = tk.Label(qr_card, text="", bg="#1a1f36", fg="#31d6b0",
-                                  font=("Consolas", 8), wraplength=310,
+                                  font=("Consolas", 8), wraplength=340,
                                   justify="center")
-        self.url_label.pack(fill="x", padx=10, pady=(0, 6))
-
-        tk.Label(qr_card, text="手机 App 扫码，或浏览器打开上面的地址",
-                 bg="#1a1f36", fg="#6b7a99", font=("Segoe UI", 8)).pack(pady=(0, 10))
+        self.url_label.pack(fill="x", padx=10, pady=(0, 8))
 
         # ---------------- 右：发布文件 ----------------
         pub_card = self._create_card(right, "发布文件（电脑 → 手机）")
@@ -154,7 +151,7 @@ class LanTransferApp:
         self.btn_add_pub_dir.pack(side="left", padx=(0, 6))
         self.btn_delete_pub = self._make_btn(pub_btns, "删除所选", self._delete_publish_files)
         self.btn_delete_pub.pack(side="left", padx=(0, 6))
-        self.btn_open_pub = self._make_btn(pub_btns, "打开发布文件夹",
+        self.btn_open_pub = self._make_btn(pub_btns, "打开文件夹",
                                            self._open_publish_folder)
         self.btn_open_pub.pack(side="right")
 
@@ -181,33 +178,54 @@ class LanTransferApp:
                                             self._open_receive_folder)
         self.btn_open_recv.pack(side="left")
 
-        self.lbl_recv_hint = tk.Label(recv_btns, text="手机上传的文件自动到这里",
-                                       bg="#1a1f36", fg="#6b7a99", font=("Segoe UI", 9))
-        self.lbl_recv_hint.pack(side="right")
+        self.lbl_recv_hint = tk.Label(recv_btns, text="手机上传的文件自动存到这里",
+                                       bg="#1a1f36", fg="#8b97b5", font=("Segoe UI", 9),
+                                       wraplength=180, justify="right", anchor="e")
+        self.lbl_recv_hint.pack(side="right", padx=(8, 0))
 
         # 定时刷新
         self.root.after(2000, self._auto_refresh)
 
     def _setup_tree(self, tree, columns):
-        """统一两个文件列表的列宽和深色样式。"""
+        """统一两个文件列表的列宽和深色样式（白字 + 斑马纹 + 蓝色选中）。"""
         tree.heading("name", text="文件名")
         tree.heading("size", text="大小")
-        tree.column("name", width=300, anchor="w")
-        tree.column("size", width=90, anchor="e")
+        tree.column("name", width=300, minwidth=160, stretch=True, anchor="w")
+        tree.column("size", width=90, minwidth=70, stretch=False, anchor="e")
 
         style = ttk.Style()
         try:
             style.theme_use("clam")
         except tk.TclError:
             pass
+
+        row_bg = "#1a1f36"
+        zebra_bg = "#232c47"
+        head_bg = "#232a44"
+        head_active_bg = "#2a3354"
+        select_bg = "#5b8cff"
+        text_fg = "#ffffff"
+
         style.configure("Dark.Treeview",
-                        background="#1a1f36", foreground="#c8d0e8",
-                        fieldbackground="#1a1f36", borderwidth=0,
+                        background=row_bg, foreground=text_fg,
+                        fieldbackground=row_bg, borderwidth=0,
                         rowheight=26, font=("Segoe UI", 10))
         style.configure("Dark.Treeview.Heading",
-                        background="#232a44", foreground="#eaf0ff",
-                        font=("Segoe UI", 10, "bold"), borderwidth=0)
-        style.map("Dark.Treeview", background=[("selected", "#5b8cff")])
+                        background=head_bg, foreground=text_fg,
+                        relief="flat", borderwidth=0,
+                        font=("Segoe UI", 10, "bold"))
+        # 普通 / 选中 / 悬停 / 失焦都显式配色，避免主题默认的灰底浅字
+        style.map("Dark.Treeview",
+                  foreground=[("selected", text_fg), ("!selected", text_fg)],
+                  # 非选中行交给 tag_configure 斑马纹，选中行用蓝色强调色
+                  background=[("selected", select_bg)])
+        style.map("Dark.Treeview.Heading",
+                  foreground=[("active", text_fg), ("!active", text_fg)],
+                  background=[("active", head_active_bg), ("!active", head_bg)])
+
+        # 交替行斑马纹：仅换背景，文字始终白色
+        tree.tag_configure("even", background=row_bg, foreground=text_fg)
+        tree.tag_configure("odd", background=zebra_bg, foreground=text_fg)
         tree.configure(style="Dark.Treeview")
 
     def _create_card(self, parent, title):
@@ -216,7 +234,7 @@ class LanTransferApp:
                         highlightthickness=1)
 
         header = tk.Frame(card, bg="#1a1f36")
-        header.pack(fill="x", padx=12, pady=(8, 0))
+        header.pack(fill="x", padx=12, pady=(2, 0))
         tk.Label(header, text=title, bg="#1a1f36", fg="#eaf0ff",
                  font=("Segoe UI", 11, "bold")).pack(side="left")
         return card
@@ -349,7 +367,7 @@ class LanTransferApp:
         """显示二维码图片。"""
         from PIL import ImageTk
 
-        img = gen_qr_image(url, box_size=5, border=3)
+        img = gen_qr_image(url, box_size=4, border=3)
         if img is None:
             self.qr_label.config(image="", text="缺少 qrcode / Pillow 库")
             return
@@ -360,8 +378,8 @@ class LanTransferApp:
             w.destroy()
 
         self.qr_label = tk.Label(self.qr_container, image=self._qr_photo,
-                                 bg="white", padx=6, pady=6)
-        self.qr_label.pack(expand=True, pady=6)
+                                 bg="white", padx=4, pady=4)
+        self.qr_label.pack(expand=True, pady=4)
 
     def _clear_qr(self):
         for w in self.qr_container.winfo_children():
@@ -376,8 +394,9 @@ class LanTransferApp:
         """清空并填充 Treeview。"""
         for item in tree.get_children():
             tree.delete(item)
-        for f in items:
-            tree.insert("", "end", values=(f["name"], lan_transfer.human_size(f["size"])))
+        for idx, f in enumerate(items):
+            tree.insert("", "end", tags=("odd" if idx % 2 else "even",),
+                        values=(f["name"], lan_transfer.human_size(f["size"])))
 
     def _refresh_all(self):
         """同时刷新发布/接收两个列表。"""
