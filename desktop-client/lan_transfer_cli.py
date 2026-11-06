@@ -19,6 +19,7 @@ import argparse
 import hashlib
 import json
 import os
+import socket
 import ssl
 import sys
 import time
@@ -26,7 +27,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.4.0"
+DISCOVERY_PORT = 8766
+CHUNK_SIZE = 8 * 1024 * 1024
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -168,7 +171,79 @@ def resolve_upload_paths(paths, recursive):
     return files
 
 
-def upload_one(server, token, space, path, verify):
+class Progress:
+    """简单的传输进度（速率 + 剩余时间），写到 stderr，不干扰 --json。"""
+
+    def __init__(self, label, total, start=0, enabled=True):
+        self.label = label
+        self.total = max(0, int(total or 0))
+        self.done = start
+        self.start = start
+        self.started = time.time()
+        self.last_report = 0.0
+        self.enabled = enabled
+
+    def update(self, done, force=False):
+        self.done = done
+        if not self.enabled:
+            return
+        now = time.time()
+        if not force and now - self.last_report < 1.0:
+            return
+        self.last_report = now
+        elapsed = max(0.001, now - self.started)
+        rate = max(0.0, (done - self.start) / elapsed)
+        pct = (done * 100.0 / self.total) if self.total else 100.0
+        eta = ((self.total - done) / rate) if (self.total and rate > 0 and done < self.total) else 0
+        sys.stderr.write("\r%s %s/%s  %.1f%%  %s/s  剩余 %s    "
+                         % (self.label, human_size(done), human_size(self.total), pct,
+                            human_size(rate), ("%ds" % eta) if eta else "0s"))
+        sys.stderr.flush()
+
+    def finish(self, done=None):
+        if done is not None:
+            self.done = done
+        if not self.enabled:
+            return
+        self.update(self.done, force=True)
+        sys.stderr.write("\n")
+        sys.stderr.flush()
+
+
+def upload_state_path(path):
+    return path + ".ltupload.json"
+
+
+def load_upload_state(path, server, space, size, checksum):
+    try:
+        with open(upload_state_path(path), "r", encoding="utf-8") as fh:
+            state = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if (state.get("server") != server or state.get("space") != space
+            or state.get("size") != size or state.get("sha256") != checksum
+            or not state.get("upload_id")):
+        return None
+    return state
+
+
+def save_upload_state(path, **state):
+    try:
+        with open(upload_state_path(path), "w", encoding="utf-8") as fh:
+            json.dump(state, fh, ensure_ascii=False, indent=2)
+    except OSError:
+        pass
+
+
+def remove_upload_state(path):
+    try:
+        os.remove(upload_state_path(path))
+    except OSError:
+        pass
+
+
+def upload_legacy(server, token, space, path, verify):
+    """旧版一次性上传（服务端不支持分片会话时回退）。"""
     size = os.path.getsize(path)
     checksum = sha256_local(path)
     started = time.time()
@@ -209,6 +284,126 @@ def upload_one(server, token, space, path, verify):
         "sha256": remote_sum or checksum,
         "elapsed_ms": elapsed_ms,
         "verified": bool(remote_sum and remote_sum == checksum),
+        "resumed": False,
+        "chunks": 0,
+        "upload_id": "",
+        "mode": "legacy",
+    }
+
+
+def upload_one(server, token, space, path, verify, resume=False):
+    """分片会话上传；resume=True 时沿用上次未完成的会话。"""
+    size = os.path.getsize(path)
+    checksum = sha256_local(path)
+    name = os.path.basename(path)
+    started = time.time()
+
+    state = load_upload_state(path, server, space, size, checksum) if resume else None
+    upload_id, offset, resumed = "", 0, False
+    if state:
+        try:
+            status, _, body = http_call(
+                server, "/api/upload/session/%s" % state["upload_id"],
+                method="GET", token=token)
+            info = json.loads(body.decode("utf-8"))
+            if info.get("size") and int(info["size"]) != size:
+                state = None
+            else:
+                upload_id = state["upload_id"]
+                offset = int(info.get("offset", 0))
+                resumed = offset > 0
+                if not sys.stderr.isatty():
+                    sys.stderr.write("从服务器断点续传：已有 %s / %s\n"
+                                     % (human_size(offset), human_size(size)))
+        except CliError as exc:
+            if exc.detail.get("status") == 404:
+                state = None
+            else:
+                raise
+        except (ValueError, KeyError):
+            state = None
+
+    if not upload_id:
+        try:
+            status, _, body = http_call(
+                server, "/api/upload/session",
+                {"name": name, "space": space, "size": str(size),
+                 "sha256": checksum},
+                method="POST", token=token, data=b"")
+            info = json.loads(body.decode("utf-8"))
+            upload_id = info["upload_id"]
+            offset = int(info.get("offset", 0))
+        except CliError as exc:
+            if exc.detail.get("status") == 404:
+                # 服务端是旧版本（<1.4），回退到一次性上传
+                return upload_legacy(server, token, space, path, verify)
+            raise
+        except (ValueError, KeyError):
+            raise CliError("服务端返回的上传会话格式不正确", EXIT_FAIL)
+
+    save_upload_state(path, server=server, space=space, name=name, size=size,
+                      sha256=checksum, upload_id=upload_id, offset=offset)
+
+    progress = Progress("上传中", size, offset)
+    progress.update(offset, force=True)
+    chunks = 0
+    try:
+        while offset < size:
+            with open(path, "rb") as fh:
+                fh.seek(offset)
+                block = fh.read(min(CHUNK_SIZE, size - offset))
+            length = len(block)
+            chunk_query = {"offset": str(offset)}
+            if resumed:
+                chunk_query["resumed"] = "1"
+            status, _, body = http_call(
+                server, "/api/upload/session/%s" % upload_id,
+                chunk_query, method="PUT", token=token, data=block,
+                headers={"Content-Type": "application/octet-stream",
+                         "Content-Length": str(length)})
+            info = json.loads(body.decode("utf-8"))
+            new_offset = int(info.get("offset", offset + length))
+            if new_offset <= offset:
+                raise CliError("服务端未推进上传偏移（%d）" % new_offset, EXIT_FAIL)
+            offset = new_offset
+            chunks += 1
+            save_upload_state(path, server=server, space=space, name=name, size=size,
+                              sha256=checksum, upload_id=upload_id, offset=offset)
+            progress.update(offset)
+        progress.finish(offset)
+
+        status, _, body = http_call(
+            server, "/api/upload/session/%s/commit" % upload_id,
+            method="POST", token=token, data=b"",
+            headers={"Content-Length": "0"})
+        payload = json.loads(body.decode("utf-8"))
+        remote_sum = payload.get("sha256", "")
+        if verify and remote_sum and remote_sum != checksum:
+            raise CliError("上传后 sha256 不一致：本地 %s / 服务器 %s"
+                           % (checksum, remote_sum), EXIT_CHECKSUM)
+        remove_upload_state(path)
+    except KeyboardInterrupt:
+        sys.stderr.write("\n上传已中断，断点已保留；加 --resume 可继续。\n")
+        raise
+    except CliError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise CliError("上传中断: %s（断点已保留，加 --resume 可继续）" % exc,
+                       EXIT_NETWORK)
+
+    elapsed_ms = int((time.time() - started) * 1000)
+    return {
+        "file": path,
+        "name": payload.get("name", name),
+        "space": payload.get("space", space),
+        "bytes": payload.get("size", size),
+        "sha256": remote_sum or checksum,
+        "elapsed_ms": elapsed_ms,
+        "verified": bool(remote_sum and remote_sum == checksum),
+        "resumed": bool(payload.get("resumed", resumed)),
+        "chunks": int(payload.get("chunks", chunks)),
+        "upload_id": upload_id,
+        "mode": "session",
     }
 
 
@@ -224,74 +419,176 @@ def unique_local_path(directory, name):
     return os.path.join(directory, "%s-%d%s" % (stem, int(time.time()), ext))
 
 
-def download_one(server, token, space, name, out_dir, verify):
-    os.makedirs(out_dir, exist_ok=True)
-    params = {"name": name, "space": space, "checksum": "1" if verify else ""}
-    url = build_url(server, "/download", params)
-    req = urllib.request.Request(url)
-    req.add_header("Authorization", "Bearer " + token)
-    started = time.time()
+def parse_content_range(value):
+    """解析 bytes start-end/total，返回 (start, end, total) 或 None。"""
     try:
-        resp = urllib.request.urlopen(req, context=ssl_context(), timeout=_TIMEOUT)
-    except urllib.error.HTTPError as exc:
-        body = exc.read()
-        message = "HTTP %d" % exc.code
-        try:
-            message = json.loads(body.decode("utf-8")).get("error") or message
-        except Exception:
-            pass
-        code = EXIT_AUTH if exc.code in (401, 403) else \
-            EXIT_NOT_FOUND if exc.code == 404 else EXIT_FAIL
-        raise CliError(message, code, {"status": exc.code})
-    except urllib.error.URLError as exc:
-        raise CliError("下载失败: %s" % getattr(exc, "reason", exc), EXIT_NETWORK)
+        spec = value.split("bytes", 1)[1].strip()
+        span, _, total = spec.partition("/")
+        first, _, last = span.partition("-")
+        return int(first), int(last), int(total)
+    except (IndexError, ValueError):
+        return None
 
-    with resp:
-        remote_sum = resp.headers.get("X-File-SHA256", "")
-        remote_space = resp.headers.get("X-Space", space)
-        remote_size = int(resp.headers.get("Content-Length") or 0)
-        dest = unique_local_path(out_dir, os.path.basename(name))
-        tmp = dest + ".part"
-        digest = hashlib.sha256()
-        written = 0
+
+def download_meta_path(part):
+    return part + ".json"
+
+
+def download_one(server, token, space, name, out_dir, verify, resume=False):
+    """下载文件；resume=True 时用同名 .part 文件 + Range 从断点继续。"""
+    os.makedirs(out_dir, exist_ok=True)
+    local_name = os.path.basename(str(name).replace("\\", "/")) or "download.bin"
+    part = os.path.join(out_dir, local_name + ".part")
+    meta_path = download_meta_path(part)
+    started = time.time()
+
+    offset, etag, total_hint = 0, "", 0
+    if resume and os.path.isfile(part):
+        offset = os.path.getsize(part)
         try:
-            with open(tmp, "wb") as fh:
-                while True:
-                    block = resp.read(1024 * 1024)
-                    if not block:
-                        break
-                    fh.write(block)
-                    digest.update(block)
-                    written += len(block)
-            os.replace(tmp, dest)
-        except OSError as exc:
+            with open(meta_path, "r", encoding="utf-8") as fh:
+                meta = json.load(fh)
+            if meta.get("space") == space and meta.get("name") == local_name:
+                etag = meta.get("etag", "")
+                total_hint = int(meta.get("total", 0) or 0)
+            else:
+                etag, total_hint = "", 0
+        except (OSError, ValueError):
+            pass
+        if offset:
+            sys.stderr.write("从本地断点续传：已有 %s%s\n"
+                             % (human_size(offset),
+                                (" / " + human_size(total_hint)) if total_hint else ""))
+    else:
+        for stale in (part, meta_path):
             try:
-                if os.path.exists(tmp):
-                    os.remove(tmp)
+                if os.path.exists(stale):
+                    os.remove(stale)
             except OSError:
                 pass
-            raise CliError("写入文件失败: %s" % exc, EXIT_FAIL)
+        offset, etag, total_hint = 0, "", 0
 
-    local_sum = digest.hexdigest()
-    elapsed_ms = int((time.time() - started) * 1000)
-    if verify:
-        if remote_sum:
+    restarted = False
+    for attempt in range(2):
+        params = {"name": name, "space": space, "checksum": "1" if verify else ""}
+        req = urllib.request.Request(build_url(server, "/download", params))
+        req.add_header("Authorization", "Bearer " + token)
+        if offset > 0:
+            req.add_header("Range", "bytes=%d-" % offset)
+            if etag:
+                req.add_header("If-Range", etag)
+        try:
+            resp = urllib.request.urlopen(req, context=ssl_context(), timeout=_TIMEOUT)
+        except urllib.error.HTTPError as exc:
+            body = exc.read()
+            message = "HTTP %d" % exc.code
+            try:
+                message = json.loads(body.decode("utf-8")).get("error") or message
+            except Exception:
+                pass
+            if exc.code == 416 and offset > 0 and not restarted:
+                # 本地 .part 已超过/不匹配服务器文件：删掉重下
+                try:
+                    os.remove(part)
+                except OSError:
+                    pass
+                offset, etag, total_hint, restarted = 0, "", 0, True
+                continue
+            code = EXIT_AUTH if exc.code in (401, 403) else \
+                EXIT_NOT_FOUND if exc.code == 404 else EXIT_FAIL
+            raise CliError(message, code, {"status": exc.code})
+        except urllib.error.URLError as exc:
+            raise CliError("下载失败: %s（加 --resume 可从断点继续）"
+                           % getattr(exc, "reason", exc), EXIT_NETWORK)
+
+        status = getattr(resp, "status", 200)
+        remote_sum = resp.headers.get("X-File-SHA256", "")
+        remote_space = resp.headers.get("X-Space", space)
+        remote_etag = resp.headers.get("ETag", "")
+        remote_total = int(resp.headers.get("X-File-Size") or 0)
+        mode = "ab"
+        if status == 206:
+            content_range = parse_content_range(resp.headers.get("Content-Range", ""))
+            if not content_range or content_range[0] != offset:
+                resp.close()
+                if offset > 0 and not restarted:
+                    try:
+                        os.remove(part)
+                    except OSError:
+                        pass
+                    offset, etag, total_hint, restarted = 0, "", 0, True
+                    continue
+                raise CliError("服务器返回的 Content-Range 不正确", EXIT_FAIL)
+            remote_total = content_range[2]
+        else:
+            # 200：服务器忽略 Range（文件已变化或无 If-Range 支持），从头写
+            if offset > 0:
+                sys.stderr.write("服务器返回完整文件（文件可能已变化），从头下载\n")
+            offset = 0
+            mode = "wb"
+
+        total = remote_total or total_hint
+        progress = Progress("下载中", total, offset)
+        progress.update(offset, force=True)
+        written = offset
+        try:
+            with resp:
+                with open(part, mode) as fh:
+                    while True:
+                        block = resp.read(1024 * 1024)
+                        if not block:
+                            break
+                        fh.write(block)
+                        written += len(block)
+                        progress.update(written)
+            progress.finish(written)
+        except CliError:
+            raise
+        except Exception as exc:
+            try:
+                with open(meta_path, "w", encoding="utf-8") as fh:
+                    json.dump({"space": space, "name": local_name,
+                               "etag": remote_etag, "total": total}, fh)
+            except OSError:
+                pass
+            raise CliError("下载中断: %s（已保留 %s，加 --resume 可继续）"
+                           % (exc, human_size(os.path.getsize(part) if os.path.exists(part)
+                                              else 0)), EXIT_NETWORK)
+
+        local_sum = sha256_local(part) if verify else ""
+        if verify:
+            if not remote_sum:
+                raise CliError("服务器未返回 sha256，无法完成校验（确认服务端版本 >= 1.2）",
+                               EXIT_CHECKSUM)
             if remote_sum != local_sum:
+                try:
+                    os.remove(part)
+                except OSError:
+                    pass
                 raise CliError("下载后 sha256 不一致：服务器 %s / 本地 %s"
                                % (remote_sum, local_sum), EXIT_CHECKSUM)
-        else:
-            raise CliError("服务器未返回 sha256，无法完成校验（确认服务端版本 >= 1.2）",
-                           EXIT_CHECKSUM)
-    return {
-        "name": os.path.basename(name),
-        "path": dest,
-        "space": remote_space,
-        "bytes": written,
-        "size_header": remote_size,
-        "sha256": local_sum,
-        "elapsed_ms": elapsed_ms,
-        "verified": bool(verify and remote_sum and remote_sum == local_sum),
-    }
+
+        dest = unique_local_path(out_dir, local_name)
+        os.replace(part, dest)
+        try:
+            os.remove(meta_path)
+        except OSError:
+            pass
+        elapsed_ms = int((time.time() - started) * 1000)
+        return {
+            "name": local_name,
+            "path": dest,
+            "space": remote_space,
+            "bytes": written,
+            "size_header": total,
+            "sha256": local_sum or remote_sum,
+            "elapsed_ms": elapsed_ms,
+            "verified": bool(verify and remote_sum and remote_sum == local_sum),
+            "resumed_from": offset if status == 206 or offset else 0,
+            "attempt": attempt + 1,
+        }
+
+    raise CliError("下载失败（已重试）", EXIT_FAIL)
 
 
 # --------------------------------------------------------------------------- #
@@ -311,6 +608,9 @@ def cmd_health(args):
         print("端口: 默认 %s 被占用，已自动改用 %s"
               % (data.get("port_requested"), data.get("port")))
     print("空间: %s 个（默认 %s）" % (data.get("spaces"), data.get("default_space")))
+    discovery = data.get("discovery") or {}
+    print("发现: %s（UDP %s）" % (
+        "广播中" if discovery.get("enabled") else "已关闭", discovery.get("port")))
     caps = data.get("capabilities") or {}
     enabled = [name for name, ok in caps.items() if ok]
     print("能力: %s" % ", ".join(enabled))
@@ -359,21 +659,27 @@ def cmd_put(args):
     first_error = None
     for path in paths:
         try:
-            result = upload_one(args.server, token, args.space, path, args.verify)
+            result = upload_one(args.server, token, args.space, path, args.verify,
+                                resume=args.resume)
             result["ok"] = True
             results.append(result)
             if not args.json:
-                print("上传完成: %s -> %s (%s, %d ms)"
+                print("上传完成: %s -> %s (%s, %d ms, %s)"
                       % (os.path.basename(path), result["name"],
-                         human_size(result["bytes"]), result["elapsed_ms"]))
+                         human_size(result["bytes"]), result["elapsed_ms"],
+                         ("续传 %d 片" % result["chunks"]) if result.get("resumed")
+                         else "分片 %d 片" % result["chunks"]))
         except CliError as exc:
             results.append({
                 "file": path, "ok": False, "error": exc.message, "code": exc.code,
+                "resume_hint": bool(os.path.exists(upload_state_path(path))),
             })
             if first_error is None:
                 first_error = exc
             if not args.json:
                 sys.stderr.write("上传失败: %s: %s\n" % (path, exc.message))
+                if os.path.exists(upload_state_path(path)):
+                    sys.stderr.write("  断点已保留，重新执行并加 --resume 可继续。\n")
 
     payload = {
         "ok": first_error is None,
@@ -395,18 +701,18 @@ def cmd_get(args):
     out_dir = os.path.abspath(os.path.expanduser(args.out))
     results = []
     first_error = None
-    if args.resume:
-        if not args.json:
-            sys.stderr.write("提示: --resume 目前仅为接口占位，本轮将完整下载。\n")
     for name in args.names:
         try:
-            result = download_one(args.server, token, args.space, name, out_dir, args.verify)
+            result = download_one(args.server, token, args.space, name, out_dir,
+                                  args.verify, resume=args.resume)
             result["ok"] = True
             results.append(result)
             if not args.json:
-                print("下载完成: %s -> %s (%s, %d ms)"
+                resumed = result.get("resumed_from") or 0
+                print("下载完成: %s -> %s (%s, %d ms%s)"
                       % (name, result["path"], human_size(result["bytes"]),
-                         result["elapsed_ms"]))
+                         result["elapsed_ms"],
+                         (", 从 %s 续传" % human_size(resumed)) if resumed else ""))
         except CliError as exc:
             results.append({"name": name, "ok": False, "error": exc.message, "code": exc.code})
             if first_error is None:
@@ -480,6 +786,111 @@ def cmd_rm(args):
     return first_error.code if first_error else EXIT_OK
 
 
+def local_ipv4():
+    """获取本机用于局域网通信的 IPv4 地址（不实际发包）。"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind(("", 0))
+        sock.connect(("223.5.5.5", 80))
+        return sock.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        sock.close()
+
+
+def same_subnet(ip_a, ip_b):
+    """粗略的同网段判断（/24）；无法判断时返回 True，避免误杀。"""
+    if not ip_a or not ip_b or ip_a.startswith("127.") or ip_b.startswith("127."):
+        return True
+    try:
+        a, b = ip_a.split("."), ip_b.split(".")
+        return len(a) == 4 and len(b) == 4 and a[:3] == b[:3]
+    except ValueError:
+        return True
+
+
+def cmd_discover(args):
+    """监听 UDP beacon，列出局域网内可用的 lan-transfer 服务。"""
+    started = time.time()
+    local = local_ipv4()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    except (AttributeError, OSError):
+        pass
+    try:
+        sock.bind(("", args.discovery_port))
+    except OSError as exc:
+        raise CliError("无法监听发现端口 %d: %s" % (args.discovery_port, exc),
+                       EXIT_NETWORK)
+    sock.settimeout(0.5)
+
+    found = {}
+    deadline = started + max(0.5, args.timeout)
+    try:
+        while time.time() < deadline:
+            try:
+                data, addr = sock.recvfrom(4096)
+            except socket.timeout:
+                continue
+            except OSError as exc:
+                raise CliError("监听广播失败: %s" % exc, EXIT_NETWORK)
+            try:
+                payload = json.loads(data.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                continue
+            if payload.get("app") != "lan-transfer":
+                continue
+            # beacon 里带的是服务端局域网 IP；广播源地址可能是 VPN/虚拟网卡，
+            # 因此同网段判断优先用 payload 里的 ip，两者任一匹配即可。
+            ip = str(payload.get("ip") or "").strip() or str(addr[0])
+            if not args.any_subnet:
+                if not (same_subnet(local, ip) or same_subnet(local, str(addr[0]))):
+                    continue
+            try:
+                port = int(payload.get("port") or 0)
+            except (TypeError, ValueError):
+                continue
+            if port <= 0:
+                continue
+            scheme = payload.get("scheme") or "https"
+            found[(ip, port)] = {
+                "ip": ip,
+                "port": port,
+                "server": "%s://%s:%d" % (scheme, ip, port),
+                "version": payload.get("version", ""),
+                "spaces": payload.get("spaces", 0),
+                "default_space": payload.get("default_space", ""),
+                "fallback": bool(payload.get("fallback")),
+                "host": payload.get("host", ""),
+                "scheme": scheme,
+            }
+    finally:
+        sock.close()
+
+    elapsed_ms = int((time.time() - started) * 1000)
+    items = [found[key] for key in sorted(found)]
+    if args.json:
+        out_json({"ok": True, "command": "discover", "local_ip": local,
+                  "elapsed_ms": elapsed_ms, "services": items})
+        return EXIT_OK
+    if not items:
+        print("未发现服务（耗时 %d ms，本机 %s）" % (elapsed_ms, local))
+        print("请确认：电脑端已启动、手机/电脑在同一网段、防火墙允许 UDP %d。"
+              % args.discovery_port)
+        return EXIT_OK
+    print("发现 %d 个服务（耗时 %d ms，本机 %s）：" % (len(items), elapsed_ms, local))
+    for item in items:
+        print("  %-32s v%-8s spaces=%s%s  %s" % (
+            item["server"], item["version"] or "?",
+            item["spaces"], "  端口顺延" if item["fallback"] else "",
+            item["host"]))
+    print("可直接使用: --server %s" % items[0]["server"])
+    return EXIT_OK
+
+
 # --------------------------------------------------------------------------- #
 # 入口
 # --------------------------------------------------------------------------- #
@@ -498,7 +909,8 @@ def build_parser():
                         help="传输后校验 sha256（默认开启）")
     common.add_argument("--no-verify-sha256", dest="verify", action="store_false",
                         help="关闭 sha256 校验")
-    common.add_argument("--resume", action="store_true", help="断点续传（当前仅占位）")
+    common.add_argument("--resume", action="store_true",
+                        help="断点续传（get 用 .part + Range；put 恢复分片会话）")
 
     parser = argparse.ArgumentParser(prog="lan_transfer_cli.py",
                                      description="局域网互传命令行客户端 v%s" % APP_VERSION)
@@ -526,6 +938,15 @@ def build_parser():
     p = sub.add_parser("rm", parents=[common], help="删除文件")
     p.add_argument("names", nargs="+", help="要删除的文件名")
     p.set_defaults(func=cmd_rm)
+
+    p = sub.add_parser("discover", parents=[common],
+                       help="发现局域网内可用的服务（UDP 广播）")
+    p.add_argument("--timeout", type=float, default=3.0, help="监听时长（秒，默认 3）")
+    p.add_argument("--discovery-port", type=int, default=DISCOVERY_PORT,
+                   help="发现端口（默认 %d）" % DISCOVERY_PORT)
+    p.add_argument("--any-subnet", action="store_true",
+                   help="不限制同网段（默认只接受本机同网段广播）")
+    p.set_defaults(func=cmd_discover)
 
     return parser
 
