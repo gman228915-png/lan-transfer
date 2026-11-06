@@ -274,9 +274,79 @@
     return row;
   }
 
-  // --------------------------- 下载（断点续传） --------------------------- //
+  // --------------------------- 下载（断点续传 + IndexedDB 持久化） --------------------------- //
+  var idb = (function () {
+    var DB_NAME = "lan-transfer", STORE = "downloads", dbPromise = null;
+    function openDb() {
+      if (dbPromise) return dbPromise;
+      dbPromise = new Promise(function (resolve, reject) {
+        if (!window.indexedDB) { reject(new Error("no indexedDB")); return; }
+        var req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = function () {
+          var db = req.result;
+          if (!db.objectStoreNames.contains(STORE)) {
+            db.createObjectStore(STORE, { keyPath: "key" });
+          }
+        };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error || new Error("idb open failed")); };
+      });
+      return dbPromise;
+    }
+    function run(mode, fn) {
+      return openDb().then(function (db) {
+        return new Promise(function (resolve, reject) {
+          var tx = db.transaction(STORE, mode);
+          var store = tx.objectStore(STORE);
+          var request = fn(store);
+          tx.oncomplete = function () { resolve(request ? request.result : undefined); };
+          tx.onerror = function () { reject(tx.error); };
+          tx.onabort = function () { reject(tx.error); };
+        });
+      }).catch(function () { return null; });
+    }
+    return {
+      get: function (key) { return run("readonly", function (s) { return s.get(key); }); },
+      put: function (rec) { return run("readwrite", function (s) { return s.put(rec); }); },
+      del: function (key) { return run("readwrite", function (s) { return s.delete(key); }); },
+      prune: function (maxAgeMs) {
+        return run("readwrite", function (s) {
+          var cutoff = Date.now() - maxAgeMs;
+          var req = s.openCursor();
+          req.onsuccess = function () {
+            var cursor = req.result;
+            if (!cursor) return;
+            var rec = cursor.value || {};
+            if (!rec.updated || rec.updated < cutoff) cursor.delete();
+            cursor.continue();
+          };
+          return null;
+        });
+      }
+    };
+  })();
+
   function downloadStateKey(f) {
     return (f.space || state.space || "") + "|" + f.name;
+  }
+
+  function downloadPersistKey(f) {
+    return (f.space || state.space || "") + "|" + f.name + "|" + (f.size || 0);
+  }
+
+  function persistDownload(pkey, dl) {
+    if (!dl || !dl.received) return;
+    idb.put({
+      key: pkey,
+      space: dl.space,
+      name: dl.name,
+      size: dl.size,
+      etag: dl.etag,
+      total: dl.total,
+      received: dl.received,
+      chunks: dl.chunks.slice(),   // 快照，避免写入期间又 push 新分片
+      updated: Date.now()
+    });
   }
 
   function updateDownloadMeta(meta, dl, note) {
@@ -291,20 +361,53 @@
 
   function downloadFile(f, meta, trigger) {
     var key = downloadStateKey(f);
+    var pkey = downloadPersistKey(f);
     var dl = state.downloads[key];
-    if (!dl) {
-      dl = state.downloads[key] = {
-        chunks: [], received: 0, total: f.size || 0, etag: "", running: false, speed: 0
-      };
-    }
-    if (dl.running) {
+    if (dl && dl.running) {
       toast("正在下载《" + f.name + "》");
       return;
     }
+    if (dl) {
+      runDownload(f, meta, trigger, dl, pkey, key);
+      return;
+    }
+    if (trigger) trigger.classList.add("busy");
+    // 新开始的下载：先尝试从 IndexedDB 恢复上次（含刷新前的）断点
+    idb.get(pkey).then(function (rec) {
+      if (!rec || !rec.received || rec.size !== (f.size || 0)) return null;
+      if (!rec.chunks || !rec.chunks.length) return null;
+      // 校验分片总字节数，避免半截/损坏的记录拼出坏文件
+      var sum = 0;
+      for (var i = 0; i < rec.chunks.length; i++) {
+        sum += rec.chunks[i].byteLength || rec.chunks[i].length || 0;
+      }
+      return sum === rec.received ? rec : null;
+    }).then(function (rec) {
+      var fresh = {
+        chunks: [], received: 0, total: f.size || 0, etag: "", running: false,
+        speed: 0, space: f.space || state.space || "", name: f.name,
+        size: f.size || 0, saved: 0, savedAt: 0
+      };
+      if (rec) {
+        fresh.chunks = rec.chunks || [];
+        fresh.received = rec.received;
+        fresh.etag = rec.etag || "";
+        if (rec.total) fresh.total = rec.total;
+        fresh.saved = fresh.received;
+        toast("从上次断点继续：" + formatSize(fresh.received));
+      }
+      state.downloads[key] = fresh;
+      runDownload(f, meta, trigger, fresh, pkey, key);
+    });
+  }
+
+  function runDownload(f, meta, trigger, dl, pkey, key) {
     dl.running = true;
+    if (trigger) trigger.classList.add("busy");
     var encoded = encodeURIComponent(f.name);
-    var sq = "&space=" + encodeURIComponent(f.space || state.space || "");
+    var sq = "&space=" + encodeURIComponent(dl.space);
     var attempt = 0;
+    var restarted = false;
 
     function step() {
       var headers = {};
@@ -316,14 +419,26 @@
       fetch("/download?checksum=0&name=" + encoded + sq,
             { headers: headers, cache: "no-store" })
         .then(function (res) {
-          if (!res.ok) {
-            throw new Error("HTTP " + res.status +
-              (res.status === 401 || res.status === 403 ? "（口令无效）" : ""));
-          }
-          if (dl.received > 0 && res.status === 200) {
-            // 服务器没接受 Range（文件已变化），从头接收
+          if (res.status === 416 && dl.received > 0 && !restarted) {
+            // 本地断点已超出服务器文件：丢弃后从头下载
+            restarted = true;
             dl.chunks = [];
             dl.received = 0;
+            dl.etag = "";
+            idb.del(pkey);
+            throw new Error("__restart__");
+          }
+          if (!res.ok) {
+            throw new Error("HTTP " + res.status +
+              (res.status === 401 || res.status === 403 ? "（口令无效）" : "") +
+              (res.status === 429 ? "（服务端繁忙，请稍后）" : ""));
+          }
+          if (dl.received > 0 && res.status === 200) {
+            // 服务器未接受 Range（ETag 已变化），丢弃旧分片从头接收
+            dl.chunks = [];
+            dl.received = 0;
+            dl.etag = "";
+            idb.del(pkey);
           }
           var etag = res.headers.get("ETag");
           if (etag) dl.etag = etag;
@@ -339,19 +454,27 @@
           var started = performance.now();
           var startBytes = dl.received;
           var lastPaint = 0;
+          dl.savedAt = started;
           function pump() {
             return reader.read().then(function (r) {
               if (r.done) return;
               dl.chunks.push(r.value);
               dl.received += r.value.length;
-              var elapsed = (performance.now() - started) / 1000;
+              var now = performance.now();
+              var elapsed = (now - started) / 1000;
               if (elapsed > 0.2) {
                 dl.speed = (dl.received - startBytes) / elapsed;
-                var now = performance.now();
                 if (now - lastPaint > 400) {
                   lastPaint = now;
                   updateDownloadMeta(meta, dl);
                 }
+              }
+              // 定期把已收字节与 ETag 写入 IndexedDB，刷新/关页后可续传
+              if (dl.received - dl.saved >= 2 * 1024 * 1024 ||
+                  (dl.etag && now - dl.savedAt > 1500)) {
+                dl.saved = dl.received;
+                dl.savedAt = now;
+                persistDownload(pkey, dl);
               }
               return pump();
             });
@@ -369,23 +492,30 @@
           a.click();
           a.remove();
           setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+          idb.del(pkey);
           delete state.downloads[key];
           if (trigger) trigger.classList.remove("busy");
           meta.textContent = (meta.dataset.base || "") + " · 下载完成";
           toast("下载完成：" + f.name);
         })
         .catch(function (err) {
+          if (err && err.message === "__restart__") {
+            step();
+            return;
+          }
           attempt++;
           if (attempt < DOWNLOAD_RETRIES && dl.received > 0) {
+            persistDownload(pkey, dl);
             updateDownloadMeta(meta, dl, "连接中断，第 " + attempt + " 次重试…");
             setTimeout(step, 600 + attempt * 800);
             return;
           }
           dl.running = false;
           if (trigger) trigger.classList.remove("busy");
+          if (dl.received) persistDownload(pkey, dl);
           var reason = (err && err.message) || "网络错误";
           updateDownloadMeta(meta, dl, "下载中断，已保留 " +
-            formatSize(dl.received) + "，点下载继续");
+            formatSize(dl.received) + "，刷新页面后点下载可继续");
           toast("下载中断：" + reason + "，点下载按钮可从断点继续", true);
         });
     }
@@ -654,6 +784,7 @@
   }
 
   function init() {
+    idb.prune(3 * 24 * 60 * 60 * 1000); // 清理 3 天前的下载断点记录
     bindEvents();
     var isDesktop = window.matchMedia("(min-width: 760px)").matches;
     if (isDesktop) {
