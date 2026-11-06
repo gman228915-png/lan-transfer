@@ -51,6 +51,13 @@ class LanTransferApp:
         self._share_url = ""
         self._qr_photo = None  # 保持引用防止被 GC
 
+        # 读取上次保存的「局域网可见」设置（默认开启）
+        try:
+            lan_transfer.DISCOVERY_ENABLED = bool(
+                lan_transfer.load_settings().get("discovery", True))
+        except Exception:
+            lan_transfer.DISCOVERY_ENABLED = True
+
         self._build_ui()
         self._try_start()
 
@@ -112,6 +119,20 @@ class LanTransferApp:
         self.btn_open_pub_top = self._make_btn(info_btns2, "打开文件夹",
                                               self._open_publish_folder)
         self.btn_open_pub_top.pack(side="left")
+
+        disc_row = tk.Frame(info_card, bg="#1a1f36")
+        disc_row.pack(fill="x", padx=10, pady=(0, 8))
+        self.discovery_var = tk.BooleanVar(value=lan_transfer.DISCOVERY_ENABLED)
+        self.chk_discovery = tk.Checkbutton(
+            disc_row, text="在局域网内可见（UDP 广播发现）", variable=self.discovery_var,
+            command=self._toggle_discovery, bg="#1a1f36", fg="#c8d0e8",
+            selectcolor="#1a1f36", activebackground="#1a1f36",
+            activeforeground="#ffffff", font=("Segoe UI", 9),
+            borderwidth=0, highlightthickness=0)
+        self.chk_discovery.pack(side="left")
+        self.lbl_discovery = tk.Label(disc_row, text="", bg="#1a1f36",
+                                      fg="#6b7a99", font=("Segoe UI", 8))
+        self.lbl_discovery.pack(side="right")
 
         # ---------------- 左：二维码 ----------------
         qr_card = self._create_card(left, "手机扫码连接")
@@ -283,6 +304,9 @@ class LanTransferApp:
             lan_transfer.TOKEN = "".join(
                 secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(10))
 
+            # 是否广播发现由界面开关决定（默认开）
+            lan_transfer.DISCOVERY_ENABLED = bool(self.discovery_var.get())
+
             # bind="lan"：只监听本机局域网 IP，端口被占用会自动顺延
             self.server = lan_transfer.run(port=8765, open_browser=False, bind="lan")
             self._running = True
@@ -303,6 +327,7 @@ class LanTransferApp:
                 self.server.server_close()
         except Exception:
             pass
+        lan_transfer.stop_beacon()
         self.server = None
         self._running = False
         self._share_url = ""
@@ -312,6 +337,23 @@ class LanTransferApp:
         self._set_info("服务已停止")
         self.url_label.config(text="")
         self._clear_qr()
+        self._update_discovery_label()
+
+    def _toggle_discovery(self):
+        """切换「在局域网内可见」，并持久化到 settings.json。"""
+        enabled = bool(self.discovery_var.get())
+        lan_transfer.set_discovery_enabled(enabled, persist=True)
+        self._update_discovery_label()
+        if self._running:
+            self._on_server_started()
+
+    def _update_discovery_label(self):
+        if not self._running:
+            self.lbl_discovery.config(text="服务未启动", fg="#6b7a99")
+        elif lan_transfer.DISCOVERY_ENABLED:
+            self.lbl_discovery.config(text="已广播", fg="#31d6b0")
+        else:
+            self.lbl_discovery.config(text="已关闭", fg="#8b97b5")
 
     def _on_server_started(self):
         """服务启动后更新界面（在主线程中调用）。"""
@@ -354,11 +396,15 @@ class LanTransferApp:
                     space_lines.append("  %s [%s] %s" % (
                         name, space["mode"], space["path"]))
                 info_text += "\n" + "\n".join(space_lines)
+            info_text += "\n局域网发现：%s（UDP %d）" % (
+                "已广播，局域网内可发现" if lan_transfer.DISCOVERY_ENABLED else "已关闭",
+                lan_transfer.DISCOVERY_PORT)
             self._set_info(info_text)
 
             self.url_label.config(text=self._share_url)
             self._show_qr(self._share_url)
             self._refresh_all()
+            self._update_discovery_label()
 
         except Exception as e:
             messagebox.showerror("错误", str(e))
@@ -576,10 +622,6 @@ class LanTransferApp:
 def main():
     import traceback
 
-    # 无界面常驻模式（供 CLI / 其他程序 / AI 调用）
-    if "--headless" in sys.argv[1:]:
-        sys.exit(lan_transfer.headless_main(sys.argv[1:]))
-
     def handle_exception(exc_type, exc_value, exc_traceback):
         try:
             err_file = os.path.join(lan_transfer.BASE_DIR, "error.log")
@@ -590,9 +632,16 @@ def main():
                 f.write("\n")
         except Exception:
             pass
-        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        try:
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        except Exception:
+            pass
 
     sys.excepthook = handle_exception
+
+    # 无界面常驻模式（供 CLI / 其他程序 / AI 调用）
+    if "--headless" in sys.argv[1:]:
+        sys.exit(lan_transfer.headless_main(sys.argv[1:]))
 
     root = tk.Tk()
     root.configure(bg="#0f1425")
