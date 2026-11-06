@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.0"
 DISCOVERY_PORT = 8766
 CHUNK_SIZE = 8 * 1024 * 1024
 
@@ -786,6 +786,54 @@ def cmd_rm(args):
     return first_error.code if first_error else EXIT_OK
 
 
+def cmd_rotate(args):
+    """轮换全局口令：服务器生成新口令，旧口令在宽限期内仍可用。"""
+    token = read_token(args.token_file) or args.token
+    status, _, body = http_call(args.server, "/api/token/rotate",
+                                {"grace": str(args.grace)}, method="POST",
+                                token=token, data=b"",
+                                headers={"Content-Length": "0"})
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except Exception:
+        raise CliError("服务器返回不是合法 JSON", EXIT_FAIL)
+    new_token = str(data.get("token") or "").strip()
+    if not new_token:
+        raise CliError("服务器未返回新口令", EXIT_FAIL)
+
+    file_updated = False
+    if args.token_file:
+        try:
+            with open(args.token_file, "w", encoding="utf-8") as fh:
+                fh.write(new_token + "\n")
+            file_updated = True
+        except OSError as exc:
+            raise CliError("新口令是 %s，但写入口令文件失败: %s" % (new_token, exc),
+                           EXIT_FAIL)
+
+    payload = {
+        "ok": True,
+        "command": "rotate-token",
+        "server": args.server,
+        "token": new_token,
+        "grace_seconds": data.get("grace_seconds"),
+        "previous_valid_until": data.get("previous_valid_until"),
+        "token_file_updated": file_updated,
+        "message": data.get("message", ""),
+    }
+    if args.json:
+        out_json(payload)
+    else:
+        print("口令已轮换：%s" % new_token)
+        print("旧口令在 %s 秒内仍然可用（平滑过渡）。"
+              % data.get("grace_seconds", 0))
+        if file_updated:
+            print("已写入口令文件：%s" % args.token_file)
+        else:
+            print("请更新客户端口令（例如 MCP 的 --token 或 token 文件）。")
+    return EXIT_OK
+
+
 def local_ipv4():
     """获取本机用于局域网通信的 IPv4 地址（不实际发包）。"""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -810,8 +858,8 @@ def same_subnet(ip_a, ip_b):
         return True
 
 
-def cmd_discover(args):
-    """监听 UDP beacon，列出局域网内可用的 lan-transfer 服务。"""
+def collect_services(timeout=3.0, discovery_port=8766, any_subnet=False):
+    """监听 UDP beacon，返回 {local_ip, elapsed_ms, services}。供 CLI 与 MCP 复用。"""
     started = time.time()
     local = local_ipv4()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -821,14 +869,14 @@ def cmd_discover(args):
     except (AttributeError, OSError):
         pass
     try:
-        sock.bind(("", args.discovery_port))
+        sock.bind(("", discovery_port))
     except OSError as exc:
-        raise CliError("无法监听发现端口 %d: %s" % (args.discovery_port, exc),
+        raise CliError("无法监听发现端口 %d: %s" % (discovery_port, exc),
                        EXIT_NETWORK)
     sock.settimeout(0.5)
 
     found = {}
-    deadline = started + max(0.5, args.timeout)
+    deadline = started + max(0.5, timeout)
     try:
         while time.time() < deadline:
             try:
@@ -846,7 +894,7 @@ def cmd_discover(args):
             # beacon 里带的是服务端局域网 IP；广播源地址可能是 VPN/虚拟网卡，
             # 因此同网段判断优先用 payload 里的 ip，两者任一匹配即可。
             ip = str(payload.get("ip") or "").strip() or str(addr[0])
-            if not args.any_subnet:
+            if not any_subnet:
                 if not (same_subnet(local, ip) or same_subnet(local, str(addr[0]))):
                     continue
             try:
@@ -871,7 +919,19 @@ def cmd_discover(args):
         sock.close()
 
     elapsed_ms = int((time.time() - started) * 1000)
-    items = [found[key] for key in sorted(found)]
+    return {
+        "local_ip": local,
+        "elapsed_ms": elapsed_ms,
+        "services": [found[key] for key in sorted(found)],
+    }
+
+
+def cmd_discover(args):
+    """监听 UDP beacon，列出局域网内可用的 lan-transfer 服务。"""
+    info = collect_services(args.timeout, args.discovery_port, args.any_subnet)
+    local = info["local_ip"]
+    elapsed_ms = info["elapsed_ms"]
+    items = info["services"]
     if args.json:
         out_json({"ok": True, "command": "discover", "local_ip": local,
                   "elapsed_ms": elapsed_ms, "services": items})
@@ -938,6 +998,12 @@ def build_parser():
     p = sub.add_parser("rm", parents=[common], help="删除文件")
     p.add_argument("names", nargs="+", help="要删除的文件名")
     p.set_defaults(func=cmd_rm)
+
+    p = sub.add_parser("rotate-token", parents=[common],
+                       help="轮换全局口令（旧口令在宽限期内仍可用）")
+    p.add_argument("--grace", type=int, default=1800,
+                   help="旧口令宽限期（秒，默认 1800）")
+    p.set_defaults(func=cmd_rotate)
 
     p = sub.add_parser("discover", parents=[common],
                        help="发现局域网内可用的服务（UDP 广播）")
