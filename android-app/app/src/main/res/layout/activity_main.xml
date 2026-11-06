@@ -37,6 +37,43 @@
             android:textSize="14sp"
             android:inputType="textUri" />
 
+        <!-- 局域网自动发现的设备：点选即填入地址 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="6dp">
+
+            <Spinner
+                android:id="@+id/spDevices"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:background="#232a44"
+                android:paddingHorizontal="6dp"
+                android:spinnerMode="dropdown" />
+
+            <Button
+                android:id="@+id/btnDiscover"
+                style="?attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:text="🔍 扫描"
+                android:textColor="#5b8cff"
+                android:textSize="13sp"
+                android:layout_marginStart="6dp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvDiscoverHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="正在自动扫描局域网设备…"
+            android:textColor="#6b7a99"
+            android:textSize="11sp"
+            android:layout_marginTop="2dp" />
+
         <EditText
             android:id="@+id/etToken"
             android:layout_width="match_parent"

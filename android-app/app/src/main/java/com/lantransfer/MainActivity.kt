@@ -49,6 +49,13 @@ class MainActivity : AppCompatActivity() {
     private val spaceNames = mutableListOf("全部空间")
     private lateinit var spaceAdapter: ArrayAdapter<String>
 
+    /** 局域网 UDP 自动发现的设备 */
+    private val deviceList = mutableListOf<DiscoveredService>()
+    private val deviceNames = mutableListOf<String>()
+    private lateinit var deviceAdapter: ArrayAdapter<String>
+    private var discovering = false
+    private val discovery by lazy { LanDiscovery(this) }
+
     /** 同时上传的文件数上限，避免一次选几十个把设备拖死 */
     private val uploadConcurrency = 2
 
@@ -95,9 +102,26 @@ class MainActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
+        deviceAdapter = ArrayAdapter(this, R.layout.item_spinner, deviceNames)
+        deviceAdapter.setDropDownViewResource(R.layout.item_spinner)
+        binding.spDevices.adapter = deviceAdapter
+        binding.spDevices.isEnabled = false
+        binding.spDevices.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?,
+                                        position: Int, id: Long) {
+                val device = deviceList.getOrNull(position) ?: return
+                binding.etUrl.setText(device.server)
+                // 已经有口令时，点选设备即可直接连接
+                if (binding.etToken.text.toString().isNotBlank() && !opRunning) connect()
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+
         binding.btnConnect.setOnClickListener { connect() }
         binding.btnUpload.setOnClickListener { pickFile() }
         binding.btnScan.setOnClickListener { scan() }
+        binding.btnDiscover.setOnClickListener { startDiscovery(false) }
         binding.btnOpenDownloads.setOnClickListener { showDownloadOptions() }
 
         // 记住上次地址与口令；有记录时自动重连
@@ -111,6 +135,64 @@ class MainActivity : AppCompatActivity() {
             connect()
         } else {
             binding.tvStatus.text = "未连接 · 扫码或输入地址后点连接"
+        }
+
+        // 没有历史地址时，连上 Wi-Fi 后自动扫描局域网设备
+        if (savedUrl.isEmpty()) startDiscovery(true)
+    }
+
+    // --------------------------------------------------------------------------- #
+    // 局域网 UDP 自动发现
+    // --------------------------------------------------------------------------- #
+    private fun startDiscovery(auto: Boolean) {
+        if (discovering) return
+        discovering = true
+        binding.btnDiscover.isEnabled = false
+        binding.btnDiscover.text = "扫描中…"
+        binding.tvDiscoverHint.text =
+            if (auto) "正在自动扫描局域网设备…" else "正在扫描局域网设备…"
+        scope.launch {
+            val list = discovery.scan(if (auto) 5000L else 4000L)
+            withContext(Dispatchers.Main) {
+                discovering = false
+                binding.btnDiscover.isEnabled = true
+                binding.btnDiscover.text = "🔍 扫描"
+                applyDevices(list, auto)
+            }
+        }
+    }
+
+    private fun applyDevices(list: List<DiscoveredService>, auto: Boolean) {
+        deviceList.clear()
+        deviceList.addAll(list)
+        deviceNames.clear()
+        if (list.isEmpty()) {
+            deviceNames.add("未发现设备（可扫码或手输）")
+        } else {
+            for (item in list) {
+                deviceNames.add("${item.ip}:${item.port}  v${item.version.ifEmpty { "?" }}")
+            }
+        }
+        deviceAdapter.notifyDataSetChanged()
+        binding.spDevices.isEnabled = list.isNotEmpty()
+        if (list.isNotEmpty()) {
+            binding.spDevices.setSelection(0)
+            binding.etUrl.setText(list[0].server)
+            binding.tvDiscoverHint.text = "发现 ${list.size} 台设备，点选后连接"
+            if (auto) {
+                Toast.makeText(this, "发现 ${list.size} 台设备，选中后点连接",
+                    Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            binding.tvDiscoverHint.text = if (auto) {
+                "未发现设备：可点扫描重试，或扫码/手输地址"
+            } else {
+                "未发现设备：请确认电脑端已启动、手机与电脑在同一 Wi-Fi"
+            }
+            if (!auto) {
+                Toast.makeText(this, "未发现设备，请检查同一 Wi-Fi 或改用扫码",
+                    Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
