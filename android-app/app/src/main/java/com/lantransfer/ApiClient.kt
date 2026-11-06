@@ -28,6 +28,8 @@ import javax.net.ssl.X509TrustManager
  *     之后指纹变化（中间人攻击或电脑端证书重建）立即拒绝连接，
  *     用户可在界面上确认后清除旧指纹重连。
  */
+data class SpaceInfo(val name: String, val mode: String, val description: String)
+
 class ApiClient(baseUrl: String, private val token: String, context: Context) {
 
     companion object {
@@ -119,8 +121,10 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
     // ------------------------------------------------------------------
     // 业务 API
     // ------------------------------------------------------------------
-    fun listFiles(): List<FileItem> {
-        val conn = open(buildUrl("api/files"))
+    fun listFiles(space: String? = null): List<FileItem> {
+        val extra = if (space.isNullOrBlank()) null
+        else "space=" + URLEncoder.encode(space, "UTF-8")
+        val conn = open(buildUrl("api/files", extra))
         conn.requestMethod = "GET"
         conn.connectTimeout = 8000
         conn.readTimeout = 8000
@@ -142,7 +146,8 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
                     name = o.getString("name"),
                     size = o.getLong("size"),
                     mtime = o.getLong("mtime"),
-                    kind = o.getString("kind")
+                    kind = o.getString("kind"),
+                    space = o.optString("space", "")
                 ))
             }
             return result
@@ -155,13 +160,48 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
         }
     }
 
+    /** 拉取空间列表（名称 / 读写模式 / 说明）。 */
+    fun listSpaces(): List<SpaceInfo> {
+        val conn = open(buildUrl("api/spaces"))
+        conn.requestMethod = "GET"
+        conn.connectTimeout = 8000
+        conn.readTimeout = 8000
+        lastError = null
+        return try {
+            if (conn.responseCode != 200) {
+                lastError = httpError(conn.responseCode)
+                return emptyList()
+            }
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            val arr = JSONObject(body).optJSONArray("spaces") ?: return emptyList()
+            val result = mutableListOf<SpaceInfo>()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                result.add(SpaceInfo(
+                    name = o.optString("name", ""),
+                    mode = o.optString("mode", "rw"),
+                    description = o.optString("description", "")
+                ))
+            }
+            result
+        } catch (e: Exception) {
+            lastError = errorText(e)
+            Log.e(TAG, "listSpaces failed", e)
+            emptyList()
+        } finally {
+            conn.disconnect()
+        }
+    }
+
     /**
      * 上传文件，onProgress(sentBytes, totalBytes) 会随上传进度回调。
+     * space 为空时使用服务端默认空间（保持旧行为）。
      */
     fun uploadFile(
         name: String,
         inputStream: InputStream,
         size: Long,
+        space: String? = null,
         onProgress: (Long, Long) -> Unit = { _, _ -> }
     ): Boolean {
         lastError = null
@@ -171,7 +211,9 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
             return false
         }
         val encoded = URLEncoder.encode(name, "UTF-8")
-        val conn = open(buildUrl("api/upload", "name=$encoded"))
+        val query = "name=$encoded" + if (space.isNullOrBlank()) ""
+        else "&space=" + URLEncoder.encode(space, "UTF-8")
+        val conn = open(buildUrl("api/upload", query))
         conn.requestMethod = "POST"
         conn.doOutput = true
         conn.connectTimeout = 30000
@@ -215,32 +257,59 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
 
     /**
      * 下载文件到 dest，onProgress(downloadedBytes, totalBytes) 随进度回调。
-     * 失败时删除未完成的文件，方便直接重试。
+     * 使用 dest.part 作为临时文件：失败时保留，重试时用 Range 从断点继续。
      */
     fun downloadFile(
         name: String,
         dest: File,
+        space: String? = null,
         onProgress: (Long, Long) -> Unit = { _, _ -> }
     ): Boolean {
         lastError = null
         pinMismatch = false
         val encoded = URLEncoder.encode(name, "UTF-8")
-        val conn = open(buildUrl("download", "name=$encoded"))
+        val part = File(dest.parentFile, dest.name + ".part")
+        var offset = if (part.exists()) part.length() else 0L
+        val query = "name=$encoded" + if (space.isNullOrBlank()) ""
+        else "&space=" + URLEncoder.encode(space, "UTF-8")
+        val conn = open(buildUrl("download", query))
         conn.requestMethod = "GET"
         conn.connectTimeout = 15000
         conn.readTimeout = 60000
+        if (offset > 0) conn.setRequestProperty("Range", "bytes=$offset-")
 
         return try {
-            if (conn.responseCode != 200) {
-                lastError = httpError(conn.responseCode)
+            val code = conn.responseCode
+            if (code != 200 && code != 206) {
+                lastError = httpError(code)
                 return false
             }
-            val total = conn.contentLengthLong.takeIf { it > 0 } ?: -1L
-            var done = 0L
+            if (offset > 0 && code == 200) {
+                // 服务端没接受 Range（文件已变化），从头下载
+                part.delete()
+                offset = 0L
+            }
+            var total = -1L
+            if (code == 206) {
+                val header = conn.getHeaderField("Content-Range") ?: ""
+                val start = header.substringAfter("bytes ", "")
+                    .substringBefore("-").toLongOrNull()
+                val remoteTotal = header.substringAfter("/", "").toLongOrNull()
+                if (start == null || start != offset) {
+                    part.delete()
+                    lastError = "断点与服务器文件不匹配，已重新开始，请重试"
+                    return false
+                }
+                total = remoteTotal ?: -1L
+            } else {
+                total = conn.contentLengthLong.takeIf { it > 0 }?.plus(offset) ?: -1L
+            }
+
+            var done = offset
             conn.inputStream.use { input ->
-                FileOutputStream(dest).use { os ->
+                FileOutputStream(part, offset > 0).use { os ->
                     val buf = ByteArray(65536)
-                    onProgress(0L, total)
+                    onProgress(done, total)
                     while (true) {
                         val read = input.read(buf)
                         if (read <= 0) break
@@ -251,15 +320,22 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
                 }
             }
             if (total > 0 && done < total) {
-                dest.delete()
-                lastError = "下载中断（$done / $total 字节），可点重试"
+                lastError = "下载中断（已保留 ${FileItem.formatSize(done)} / " +
+                    "${FileItem.formatSize(total)}），点重试可继续"
                 false
             } else {
-                true
+                if (dest.exists()) dest.delete()
+                if (part.renameTo(dest)) {
+                    true
+                } else {
+                    part.copyTo(dest, overwrite = true)
+                    part.delete()
+                    true
+                }
             }
         } catch (e: Exception) {
-            dest.delete()
-            lastError = errorText(e)
+            // 保留 part 文件，下一次点击重试时从断点继续
+            lastError = errorText(e) + "（已保留下载断点，可重试续传）"
             Log.e(TAG, "download failed", e)
             false
         } finally {
@@ -267,9 +343,11 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
         }
     }
 
-    fun deleteFile(name: String): Boolean {
+    fun deleteFile(name: String, space: String? = null): Boolean {
         val encoded = URLEncoder.encode(name, "UTF-8")
-        val conn = open(buildUrl("api/files", "name=$encoded"))
+        val query = "name=$encoded" + if (space.isNullOrBlank()) ""
+        else "&space=" + URLEncoder.encode(space, "UTF-8")
+        val conn = open(buildUrl("api/files", query))
         conn.requestMethod = "DELETE"
         conn.connectTimeout = 8000
         conn.readTimeout = 8000

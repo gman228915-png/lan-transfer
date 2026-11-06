@@ -146,6 +146,15 @@
             android:textColor="#31d6b0"
             android:textSize="11sp"
             android:gravity="start" />
+
+        <Spinner
+            android:id="@+id/spSpace"
+            android:layout_width="132dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="8dp"
+            android:background="#232a44"
+            android:paddingHorizontal="6dp"
+            android:spinnerMode="dropdown" />
     </LinearLayout>
 
     <!-- 文件列表 -->

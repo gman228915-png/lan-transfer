@@ -21,7 +21,8 @@ class FileAdapter(
     override fun onBindViewHolder(holder: VH, position: Int) {
         val f = items[position]
         holder.b.tvName.text = f.name
-        holder.b.tvSize.text = FileItem.formatSize(f.size)
+        holder.b.tvSize.text = FileItem.formatSize(f.size) +
+            if (f.space.isNotBlank()) " · ${f.space}" else ""
         holder.b.tvKind.text = f.kind.uppercase()
         holder.b.btnDownload.setOnClickListener { onDownload(f) }
         holder.b.btnDelete.setOnClickListener { onDelete(f) }

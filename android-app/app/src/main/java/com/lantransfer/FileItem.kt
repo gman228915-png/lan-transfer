@@ -4,7 +4,8 @@ data class FileItem(
     val name: String,
     val size: Long,
     val mtime: Long,
-    val kind: String
+    val kind: String,
+    val space: String = ""
 ) {
     companion object {
         fun formatSize(bytes: Long): String {

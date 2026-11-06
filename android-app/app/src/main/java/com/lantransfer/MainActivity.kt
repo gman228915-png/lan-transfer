@@ -12,6 +12,8 @@ import android.os.Looper
 import android.view.View
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -23,6 +25,7 @@ import com.lantransfer.databinding.ActivityMainBinding
 import kotlinx.coroutines.*
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 
 class MainActivity : AppCompatActivity() {
@@ -36,6 +39,18 @@ class MainActivity : AppCompatActivity() {
     /** 正在连接 / 上传 / 下载，防止重复操作 */
     private var opRunning = false
     private var lastProgressAt = 0L
+    private var lastRateAt = 0L
+    private var lastRateDone = 0L
+
+    /** 空间选择：空字符串表示「全部空间」（保持旧行为） */
+    private var currentSpace = ""
+    private var currentSpaceReadOnly = false
+    private var spaceList: List<SpaceInfo> = emptyList()
+    private val spaceNames = mutableListOf("全部空间")
+    private lateinit var spaceAdapter: ArrayAdapter<String>
+
+    /** 同时上传的文件数上限，避免一次选几十个把设备拖死 */
+    private val uploadConcurrency = 2
 
     /** 下载到应用专属外部存储 —— 所有 Android 版本都无需任何权限就能读写 */
     private val downloadDir: File by lazy {
@@ -67,6 +82,18 @@ class MainActivity : AppCompatActivity() {
         adapter = FileAdapter(emptyList(), { f -> downloadFile(f) }, { f -> confirmDelete(f) })
         binding.rvFiles.layoutManager = LinearLayoutManager(this)
         binding.rvFiles.adapter = adapter
+
+        spaceAdapter = ArrayAdapter(this, R.layout.item_spinner, spaceNames)
+        spaceAdapter.setDropDownViewResource(R.layout.item_spinner)
+        binding.spSpace.adapter = spaceAdapter
+        binding.spSpace.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?,
+                                        position: Int, id: Long) {
+                applySpaceSelection(position, fromUser = true)
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
 
         binding.btnConnect.setOnClickListener { connect() }
         binding.btnUpload.setOnClickListener { pickFile() }
@@ -170,7 +197,13 @@ class MainActivity : AppCompatActivity() {
                     getSharedPreferences("lantransfer", MODE_PRIVATE)
                         .edit().putString("url", url).putString("token", token).apply()
                     binding.tvStatus.text = "已连接 ✓"
-                    refreshFiles()
+                    currentSpace = ""
+                    currentSpaceReadOnly = false
+                    spaceList = emptyList()
+                    spaceNames.clear()
+                    spaceNames.add("全部空间")
+                    spaceAdapter.notifyDataSetChanged()
+                    loadSpaces()
                 } else {
                     val msg = api.lastError ?: "无法连接到服务器"
                     binding.tvStatus.text = "连接失败"
@@ -192,13 +225,58 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun refreshFiles() {
+    private fun loadSpaces() {
         val api = api ?: return
         scope.launch {
-            val list = api.listFiles()
+            val spaces = api.listSpaces()
+            withContext(Dispatchers.Main) {
+                applySpaces(spaces)
+                refreshFiles()
+            }
+        }
+    }
+
+    private fun applySpaces(spaces: List<SpaceInfo>) {
+        spaceList = spaces
+        spaceNames.clear()
+        spaceNames.add("全部空间")
+        for (space in spaces) {
+            spaceNames.add(if (space.mode == "ro") "${space.name}（只读）" else space.name)
+        }
+        spaceAdapter.notifyDataSetChanged()
+        val index = spaces.indexOfFirst { it.name == currentSpace }
+        val target = if (index >= 0) index + 1 else 0
+        if (binding.spSpace.selectedItemPosition == target) {
+            applySpaceSelection(target, fromUser = false)
+        } else {
+            binding.spSpace.setSelection(target)
+        }
+    }
+
+    private fun applySpaceSelection(position: Int, fromUser: Boolean) {
+        if (position <= 0 || position > spaceList.size) {
+            currentSpace = ""
+            currentSpaceReadOnly = false
+        } else {
+            val space = spaceList[position - 1]
+            currentSpace = space.name
+            currentSpaceReadOnly = space.mode == "ro"
+        }
+        binding.btnUpload.isEnabled = !currentSpaceReadOnly && !opRunning
+        if (fromUser && currentSpaceReadOnly) {
+            Toast.makeText(this, "空间「$currentSpace」为只读，只能下载", Toast.LENGTH_SHORT).show()
+        }
+        if (api != null) refreshFiles()
+    }
+
+    private fun refreshFiles() {
+        val api = api ?: return
+        val space = currentSpace
+        scope.launch {
+            val list = api.listFiles(space.ifEmpty { null })
             withContext(Dispatchers.Main) {
                 adapter.update(list)
-                binding.tvInfo.text = "共 ${list.size} 个文件"
+                binding.tvInfo.text = "空间：${space.ifEmpty { "全部空间" }} · 共 ${list.size} 个文件"
                 binding.tvEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
                 if (list.isEmpty() && api.lastError != null) {
                     binding.tvStatus.text = api.lastError
@@ -217,6 +295,11 @@ class MainActivity : AppCompatActivity() {
         }
         if (opRunning) {
             Toast.makeText(this, "正在传输，请稍候", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (currentSpaceReadOnly) {
+            Toast.makeText(this, "当前空间「$currentSpace」为只读，只能下载",
+                Toast.LENGTH_SHORT).show()
             return
         }
         val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
@@ -251,38 +334,45 @@ class MainActivity : AppCompatActivity() {
                 binding.btnUpload.isEnabled = false
             }
 
-            val failed = mutableListOf<Uri>()
-            var sentBefore = 0L
-            var index = 0
+            val failed = java.util.Collections.synchronizedList(mutableListOf<Uri>())
+            val sent = AtomicLong(0)
+            var uploaded = 0
+            val space = currentSpace.takeIf { it.isNotEmpty() }
 
-            for (item in items) {
-                index++
-                if (item.size <= 0) {
-                    failed.add(item.uri)
-                    continue
-                }
-                withContext(Dispatchers.Main) {
-                    binding.tvStatus.text = "上传 $index/${items.size}：${item.name}"
-                }
-
-                var ok = false
-                try {
-                    contentResolver.openInputStream(item.uri)?.use { input ->
-                        ok = api.uploadFile(item.name, input, item.size) { done, _ ->
-                            updateProgress(sentBefore + done, totalBytes,
-                                "上传 $index/${items.size}")
+            // 每批最多 uploadConcurrency 个，避免一次选几十个文件拖死设备
+            for (batch in items.chunked(uploadConcurrency)) {
+                val jobs = batch.map { item ->
+                    async {
+                        if (item.size <= 0) {
+                            failed.add(item.uri)
+                            return@async
                         }
+                        withContext(Dispatchers.Main) {
+                            binding.tvStatus.text = "上传：${item.name}"
+                        }
+                        var last = 0L
+                        var ok = false
+                        try {
+                            contentResolver.openInputStream(item.uri)?.use { input ->
+                                ok = api.uploadFile(item.name, input, item.size, space) { done, _ ->
+                                    val delta = done - last
+                                    last = done
+                                    updateProgress(sent.addAndGet(delta), totalBytes,
+                                        "上传 ${uploaded}/${items.size}")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            ok = false
+                        }
+                        if (ok) uploaded++ else failed.add(item.uri)
                     }
-                } catch (e: Exception) {
-                    ok = false
                 }
-
-                if (ok) sentBefore += item.size else failed.add(item.uri)
+                jobs.awaitAll()
             }
 
             withContext(Dispatchers.Main) {
                 opRunning = false
-                binding.btnUpload.isEnabled = true
+                binding.btnUpload.isEnabled = !currentSpaceReadOnly
                 binding.progressBar.progress = if (failed.isEmpty()) 100 else {
                     binding.progressBar.progress
                 }
@@ -314,7 +404,7 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("删除") { _, _ ->
                 val api = api ?: return@setPositiveButton
                 scope.launch {
-                    val ok = api.deleteFile(f.name)
+                    val ok = api.deleteFile(f.name, f.space.takeIf { it.isNotEmpty() })
                     withContext(Dispatchers.Main) {
                         if (ok) {
                             Toast.makeText(this@MainActivity, "已删除", Toast.LENGTH_SHORT).show()
@@ -333,23 +423,27 @@ class MainActivity : AppCompatActivity() {
     // --------------------------------------------------------------------------- #
     // 下载（应用专属目录，无需任何存储权限）
     // --------------------------------------------------------------------------- #
-    private fun downloadFile(f: FileItem) {
+    private fun downloadFile(f: FileItem, destOverride: File? = null) {
         val api = api ?: return
         if (opRunning) {
             Toast.makeText(this, "正在传输，请稍候", Toast.LENGTH_SHORT).show()
             return
         }
         downloadDir.mkdirs()
-        val dest = uniqueLocalFile(sanitizeFileName(f.name))
+        // 重试时复用同一个 dest，.part 文件才能被 Range 续传
+        val dest = destOverride ?: uniqueLocalFile(sanitizeFileName(f.name))
+        val space = f.space.ifEmpty { currentSpace }
 
         scope.launch {
             withContext(Dispatchers.Main) {
                 opRunning = true
+                resetRate()
                 showProgress(true)
                 binding.tvStatus.text = "下载：${f.name}"
             }
 
-            val ok = api.downloadFile(f.name, dest) { done, total ->
+            val ok = api.downloadFile(f.name, dest,
+                space.takeIf { it.isNotEmpty() }) { done, total ->
                 updateProgress(done, total, "下载 ${f.name}")
             }
 
@@ -363,7 +457,9 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     binding.tvStatus.text = "下载失败"
                     showProgress(false)
-                    askRetry(api.lastError ?: "下载失败，请检查 Wi-Fi") { downloadFile(f) }
+                    askRetry(api.lastError ?: "下载失败，请检查 Wi-Fi") {
+                        downloadFile(f, dest)
+                    }
                 }
             }
         }
@@ -372,10 +468,24 @@ class MainActivity : AppCompatActivity() {
     // --------------------------------------------------------------------------- #
     // 进度展示
     // --------------------------------------------------------------------------- #
+    private fun resetRate() {
+        lastRateAt = 0L
+        lastRateDone = 0L
+        lastProgressAt = 0L
+    }
+
     private fun updateProgress(done: Long, total: Long, label: String) {
         val now = System.currentTimeMillis()
         if (now - lastProgressAt < 200 && done < total) return
+        val elapsed = (now - lastRateAt) / 1000.0
+        val speed = if (lastRateAt > 0 && elapsed > 0.2 && done > lastRateDone) {
+            (done - lastRateDone) / elapsed
+        } else {
+            0.0
+        }
         lastProgressAt = now
+        lastRateAt = now
+        lastRateDone = done
         runOnUiThread {
             val pct = if (total > 0) ((done * 100) / total).toInt().coerceIn(0, 100) else 0
             binding.progressBar.progress = pct
@@ -384,7 +494,13 @@ class MainActivity : AppCompatActivity() {
             } else {
                 " · ${FileItem.formatSize(done)}"
             }
-            binding.tvStatus.text = "$label  $pct%$sizeText"
+            val speedText = if (speed > 0) {
+                " · ${FileItem.formatSize(speed.toLong())}/s" +
+                    if (total > 0 && done < total) {
+                        " · 剩余 " + ((total - done) / speed).toInt() + "s"
+                    } else ""
+            } else ""
+            binding.tvStatus.text = "$label  $pct%$sizeText$speedText"
         }
     }
 
@@ -393,7 +509,7 @@ class MainActivity : AppCompatActivity() {
         if (!show) binding.progressBar.progress = 0
         binding.btnConnect.isEnabled = !show
         binding.btnScan.isEnabled = !show
-        binding.btnUpload.isEnabled = !show
+        binding.btnUpload.isEnabled = !show && !currentSpaceReadOnly
     }
 
     private fun hideProgressLater() {
