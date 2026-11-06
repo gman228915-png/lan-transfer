@@ -1,5 +1,59 @@
 # 更新记录
 
+## v1.5.0（2026-11-06）
+
+### 新增
+
+- **MCP 服务器（`desktop-client/lan_transfer_mcp.py`）**：stdio 传输、零第三方依赖，
+  直接复用 CLI 的 HTTP 逻辑（不拼接命令行）。提供 7 个工具：
+  `health` / `spaces` / `ls` / `put`（多文件 + 目录递归 + 续传）/ `get`（断点续传 + sha256）/
+  `rm` / `discover`。参数支持 `server`、`space`、`token`、`token_file`、`path`、`dest`、`verify_sha256`；
+  返回结构化 JSON（文件列表、字节数、sha256、耗时）；失败时 `isError: true` + 中文 `message` 与
+  `error_code`（`UNAUTHORIZED` / `NOT_FOUND` / `NETWORK_ERROR` / `CHECKSUM_MISMATCH` / `TOO_MANY_UPLOADS` 等）。
+  文档：新增 [docs/mcp.md](docs/mcp.md)（Claude Desktop / 通用客户端配置 + 完整示例对话）。
+- **网页端下载断点持久化**：已收字节与 `ETag` 定期写入 IndexedDB，key 为「空间+文件名+大小」；
+  刷新页面或关闭标签页后再点下载可从断点继续；服务端文件变了（ETag 不同）自动丢弃旧分片重下；
+  启动时清理 3 天前的旧记录；IndexedDB 不可用时回退页面内存。
+- **分片上传会话跨服务重启恢复**：会话元数据（id、文件名、size、space、已确认 offset、sha256、
+  分片数）原子写入 `<数据目录>/upload-sessions.json`；启动时校验临时文件并截断多余半截写入后恢复；
+  30 分钟超时清理规则不变，并同步更新持久化文件。
+- **安卓端 UDP 自动发现**：连接 Wi-Fi 后自动监听 UDP 8766 广播，发现的设备填入地址列表（Spinner），
+  点选即填入地址（已有口令时直接连接）；保留扫码与手输作为兜底；新增「🔍 扫描」按钮。
+  新增 `LanDiscovery.kt` 与 `CHANGE_WIFI_MULTICAST_STATE` 权限；APK 版本 1.5.0（versionCode 4）。
+- **口令轮换（平滑失效）**：新增 `POST /api/token/rotate?grace=<秒>` 与 CLI `rotate-token`。
+  生成新口令，旧口令在宽限期内（默认 30 分钟，最长 7 天）仍可用；新口令与宽限期写入 `settings.json`
+  并在重启后生效；带 `--token-file` 时自动写回新口令。
+- **服务端上传并发上限**：一次性上传与分片 `PUT` 共用 4 个写入槽位，超出返回
+  `429 {"error": "当前上传任务过多，请稍后重试（服务端并发上限 4）", "code": "busy"}`。
+- **`--no-tls`**：headless / 源码启动可选 HTTP 明文（仅本机调试），默认仍强制 HTTPS。
+- `/api/health` capabilities 新增 `session_persist`、`upload_limit`、`token_rotate`。
+
+### 实测（v1.5.0）
+
+- MCP：14 个 JSON-RPC 请求（initialize / tools/list / 7 个工具 + 批量上传 + 错误分支）全部返回结构化结果；
+  错误分支返回 `NETWORK_ERROR` + 中文 message；`discover` 实测 4.0s 找到 1 台设备并给出 `suggested_server`。
+- 网页刷新续传：1GB 文件下载到 102.0 MB 时刷新页面，再点下载提示「从上次断点继续：102.0 MB」，从 17% 继续。
+- 重启续传：256MB 上传到 184MB（192,937,984 B）中断 → 停止服务 → 重启（日志 `upload_sessions_restored`）
+  → `put --resume` 继续剩余 64MB，耗时 1.1s，sha256 校验通过。
+- 429：4 个慢速上传占用槽位后，第 5 个请求返回 `429` + 中文提示。
+- 口令轮换：`rotate-token` 生成新口令并写回文件，旧口令在宽限期内调用 `ls` 仍成功，新口令同样成功。
+- 安卓端：Gradle 构建通过并签名，APK 7,092,602 字节；**无真机，自动发现仅完成代码与构建验证**。
+
+### 兼容
+
+- 所有 HTTP 接口向后兼容；旧客户端不传新参数时行为与 v1.4.0 一致。
+- 新增文件 `desktop-client/lan_transfer_mcp.py` 与 `docs/mcp.md`，不影响旧部署。
+- `settings.json` 新增 `token` / `token_history` 字段；旧的 `discovery` 字段继续有效。
+- `upload-sessions.json` 可安全删除（仅失去未完成会话的恢复能力）。
+
+### 已知限制 / 计划中
+
+- MCP 服务器以源码运行，需要 Python 3.9+；暂未单独打包 exe。
+- MCP `discover` 会等满 `timeout` 才返回（beacon 每 3 秒一发），默认 3 秒。
+- 服务端上传并发上限固定为 4，暂未做成配置项。
+- 口令轮换针对全局口令；各空间独立 `token` 仍需手工修改配置。
+- 安卓自动发现未在真机验证（无设备），仅通过编译与签名验证。
+
 ## v1.4.0（2026-11-06）
 
 ### 新增

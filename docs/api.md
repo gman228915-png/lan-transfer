@@ -1,4 +1,4 @@
-# 局域网互传 API（v1.4）
+# 局域网互传 API（v1.5）
 
 服务默认使用 **HTTPS**（自签名证书）与**局域网口令**。所有接口返回 JSON（`/` 与 `/download` 除外）。
 
@@ -20,7 +20,7 @@
 {
   "ok": true,
   "app": "lan-transfer",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "api_version": 1,
   "listen": "10.113.107.46",
   "port": 8765,
@@ -44,7 +44,10 @@
     "resume": true,
     "upload_session": true,
     "upload_chunk_size": 8388608,
-    "discovery": true
+    "discovery": true,
+    "session_persist": true,
+    "upload_limit": 4,
+    "token_rotate": true
   }
 }
 ```
@@ -52,6 +55,12 @@
 - `resume` / `http_range` / `if_range`：下载支持 `Range`、`If-Range` 与 `206`。
 - `upload_session`：分片上传会话；`upload_chunk_size` 为建议分片大小（客户端可自定）。
 - `discovery`：UDP 广播发现是否开启；beacon 只含版本、端口、空间数量等元信息，**不含口令**。
+- `session_persist`：分片上传会话会落盘（`upload-sessions.json`），服务重启后仍可续传。
+- `upload_limit`：服务端同时写入的上传数上限，超出返回 `429`。
+- `token_rotate`：支持 `POST /api/token/rotate` 平滑轮换口令。
+
+> 调试：`python lan_transfer.py --headless --no-tls` 可用 HTTP 明文启动（仅建议本机调试，
+> 例如让无头浏览器验证网页端功能）；默认仍强制 HTTPS。
 
 ### `GET /api/version`
 
@@ -184,6 +193,45 @@ curl -k -H "Authorization: Bearer <token>" -H "Range: bytes=104857600-" \
 - 会话超过 **30 分钟**没有任何分片会被自动清理；服务启动时也会清理过期的 `.lt-upload-*.part`。
 - 审计日志 `logs/upload-audit-*.log` 增加 `resumed`、`chunked`、`session` 字段。
 
+### 会话持久化与跨重启续传（v1.5 新增）
+
+- 会话元数据（`id`、文件名、`size`、`space`、已确认 `offset`、`sha256`、分片数）
+  在每次创建/写入后原子写入 `<数据目录>/upload-sessions.json`。
+- 服务启动时自动恢复：校验临时文件存在且不小于 `offset`（多出的半截写入会被截断），
+  记录日志 `upload_sessions_restored`。
+- 客户端在服务重启后直接 `GET /api/upload/session/<id>` 拿到 `offset` 再继续 `PUT` 即可，
+  CLI/MCP 的 `--resume` / `resume: true` 已自动做这一步。
+- 超过 30 分钟没有更新的会话仍按原规则清理，并同步更新持久化文件。
+- 数据目录里的 `upload-sessions.json` 可安全删除（只是会失去未完成会话的恢复能力）。
+
+### 服务端上传并发上限（v1.5 新增）
+
+- 服务端同时进行「写入」的上传（一次性 `POST /api/upload` 与分片 `PUT` 共用）默认上限 **4**。
+- 超出时立即返回 `429`：
+
+```json
+{"error": "当前上传任务过多，请稍后重试（服务端并发上限 4）", "code": "busy"}
+```
+
+- 客户端应等待 1~3 秒后重试；`put` 批量上传时建议并发不超过 2。
+
+### `POST /api/token/rotate?grace=<seconds>`（v1.5 新增）
+
+轮换全局口令（需要当前有效口令）。返回新口令，旧口令在宽限期内仍然可用，
+便于多设备平滑切换。
+
+```json
+{"ok": true, "token": "8kf3m2xz9q", "grace_seconds": 1800,
+ "previous_valid_until": 1762303600,
+ "message": "口令已轮换，旧口令在 1800 秒内仍然可用"}
+```
+
+- `grace` 默认 `1800`（30 分钟），范围 60 秒 ~ 7 天。
+- 新口令与旧口令宽限期会写入 `settings.json`（`token`、`token_history`），重启后仍生效。
+- 若启动时带了 `--token-file`，新口令会同时写回该文件；文件优先于 `settings.json`。
+- 空间独立 `token` 仍然有效；轮换的是全局口令。
+- 旧口令宽限期结束后自动失效（每次校验时按时间过滤）。
+
 ### `DELETE /api/files?name=<filename>&space=<name>`
 
 - `space` 可选；不带时兼容旧前端，在默认空间和其他 `rw` 空间里查找（需要全局口令）。
@@ -204,6 +252,7 @@ curl -k -H "Authorization: Bearer <token>" -H "Range: bytes=104857600-" \
 | 411 | 上传缺少 Content-Length |
 | 416 | Range 越界（响应带 `Content-Range: bytes */size`） |
 | 422 | commit 时 sha256 校验不一致（会话被清理） |
+| 429 | 服务端上传并发已满（`code: "busy"`，稍后重试） |
 | 500 | 服务端读写异常 |
 
 ## UDP 局域网发现（v1.4 新增）
@@ -212,7 +261,7 @@ curl -k -H "Authorization: Bearer <token>" -H "Range: bytes=104857600-" \
 - 服务端向 `255.255.255.255:8766` 广播 JSON beacon，**不含口令**：
 
 ```json
-{"app": "lan-transfer", "version": "1.4.0", "port": 8765, "scheme": "https",
+{"app": "lan-transfer", "version": "1.5.0", "port": 8765, "scheme": "https",
  "spaces": 2, "default_space": "inbox", "fallback": false,
  "host": "DESKTOP-ABC", "ip": "10.0.0.5", "discovery_port": 8766}
 ```
@@ -233,8 +282,25 @@ curl -k -H "Authorization: Bearer <token>" -H "Range: bytes=104857600-" \
 | `get` | `GET /download?checksum=1`（`--resume` 时带 `Range` / `If-Range`） |
 | `rm` | `DELETE /api/files` |
 | `discover` | 监听 UDP `8766` 广播（不走 HTTP） |
+| `rotate-token` | `POST /api/token/rotate` |
 
 CLI 退出码：`0` 成功、`1` 一般失败、`2` 参数错误、`3` 口令/权限、`4` 网络、`5` sha256 不一致、`6` 文件/空间不存在。
+
+### MCP 工具与接口对照（v1.5 新增）
+
+`lan_transfer_mcp.py` 直接复用上表逻辑（不拼接命令行），工具与接口一一对应：
+
+| MCP 工具 | 接口 |
+|---|---|
+| `health` | `GET /api/health` |
+| `spaces` | `GET /api/spaces` |
+| `ls` | `GET /api/files` |
+| `put` | `POST /api/upload/session` → `PUT` → `commit`（`resume` 时先 `GET` 会话） |
+| `get` | `GET /download`（`resume` 时带 `Range` / `If-Range`） |
+| `rm` | `DELETE /api/files` |
+| `discover` | 监听 UDP `8766` 广播 |
+
+细节（工具参数、返回结构、Claude Desktop 配置、完整示例对话）见 [docs/mcp.md](mcp.md)。
 
 ## 示例
 
@@ -285,5 +351,17 @@ curl -k -H "Authorization: Bearer <token>" -X POST \
 # CLI 监听广播 3 秒，输出可直接用于 --server
 lan-transfer-cli discover --timeout 3
 lan-transfer-cli discover --timeout 3 --json
+```
+
+### 口令轮换
+
+```bash
+# 生成新口令；旧口令 30 分钟内仍可用；token.txt 会被写回新口令
+lan-transfer-cli rotate-token --server https://10.0.0.5:8765 \
+    --token-file token.txt --grace 1800
+
+# 等价的 HTTP 调用
+curl -k -H "Authorization: Bearer <旧token>" -X POST \
+     "https://10.0.0.5:8765/api/token/rotate?grace=1800"
 ```
 

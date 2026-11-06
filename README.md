@@ -3,19 +3,21 @@
 电脑上双击一个 exe 就能在局域网里开一个文件共享服务：手机和电脑连同一个 Wi-Fi，
 扫码或输入地址即可双向传文件，**不经过外网、不需要账号、不用数据线**。
 
-**当前版本：v1.4.0（2026-11-06）** ｜ [更新记录](CHANGELOG.md) ｜ [HTTP 接口文档](docs/api.md) ｜ [GitHub 仓库](https://github.com/gman228915-png/lan-transfer)
+**当前版本：v1.5.0（2026-11-06）** ｜ [更新记录](CHANGELOG.md) ｜ [HTTP 接口文档](docs/api.md) ｜ [MCP 文档](docs/mcp.md) ｜ [GitHub 仓库](https://github.com/gman228915-png/lan-transfer)
 
 ## 功能一览
 
 | 模块 | 能做什么 | 能力边界 |
 |---|---|---|
 | 桌面 GUI（Windows） | 双击 exe 自动启动服务；展示 IP、端口、口令、链接和二维码；发布文件、查看手机上传的文件；「在局域网内可见」开关控制 UDP 广播发现（默认开启） | 只监听当前局域网 IP；每次启动重新生成 10 位随机口令；端口写死请求 8765，被占用会自动顺延 |
-| 网页端（内置） | 用浏览器访问电脑，上传（点击或拖拽、多选、进度与速率、失败重试、并发 2 个上限）、下载、删除，右上角可切换空间 | 免安装；首次访问需手动信任自签名 HTTPS 证书；不能浏览空间目录下的子目录；下载断点保存在页面内存，刷新后需重新下载 |
-| 安卓端（APK） | 扫码或手输地址+口令连接；**空间下拉切换**；多文件上传（并发 2）；下载到 App 专属目录；下载中断可断点续传；已下载文件可打开/分享/另存/删除 | 需 Android 7.0 及以上；只读空间禁用上传 |
-| headless 服务 | 无界面常驻，适合放后台、当传输通道；PID 文件、按天结构化日志、优雅退出；`--no-discovery` 关闭广播 | 没有 UI，需配合浏览器 / App / CLI 使用；与服务端是同一个程序，加 `--headless` 即可 |
-| 命令行客户端（CLI） | `health` / `spaces` / `ls` / `put` / `get` / `rm` / `discover`；支持 `--json`、sha256 校验、语义化退出码 | 需 Python 环境运行源码，或使用打包好的 cli exe |
-| 断点续传 | 下载 `.part` + `Range` + `If-Range`，完成后校验整文件 sha256 再改名；上传走分片会话（8MB/片），中断后从服务端偏移继续 | 服务端需为 v1.4.0+；旧服务端自动回退一次性上传 |
-| 局域网发现 | 服务端每 3 秒 UDP 广播（端口 8766，不含口令）；CLI `discover` 列出同网段服务并给出可直接使用的 `--server` | 需要同一网段且防火墙放行 UDP 8766；跨网段需 `--any-subnet` |
+| 网页端（内置） | 用浏览器访问电脑，上传（点击或拖拽、多选、进度与速率、失败重试、并发 2 个上限）、下载、删除，右上角可切换空间；**下载断点存入 IndexedDB，刷新或关页后可续传** | 免安装；首次访问需手动信任自签名 HTTPS 证书；不能浏览空间目录下的子目录 |
+| 安卓端（APK） | **连上 Wi-Fi 自动 UDP 扫描并列出设备，点选填入地址**；保留扫码与手输兜底；空间下拉切换；多文件上传（并发 2）；下载断点续传；已下载文件可打开/分享/另存/删除 | 需 Android 7.0 及以上；自动发现需与电脑同一 Wi-Fi 且允许 UDP 8766；只读空间禁用上传 |
+| headless 服务 | 无界面常驻，适合放后台、当传输通道；PID 文件、按天结构化日志、优雅退出；`--no-discovery` 关闭广播；`--no-tls` 本机调试用 HTTP | 没有 UI，需配合浏览器 / App / CLI / MCP 使用；与服务端是同一个程序，加 `--headless` 即可 |
+| 命令行客户端（CLI） | `health` / `spaces` / `ls` / `put` / `get` / `rm` / `discover` / `rotate-token`；支持 `--json`、sha256 校验、语义化退出码 | 需 Python 环境运行源码，或使用打包好的 cli exe |
+| **MCP 服务器（v1.5 新增）** | 通过 stdio 把 `health` / `spaces` / `ls` / `put` / `get` / `rm` / `discover` 暴露给 AI（Claude Desktop、Cursor 等）；结构化结果 + 中文错误码，支持目录递归、断点续传、sha256 校验 | 需 Python 3.9+ 的 MCP 客户端；详细配置与示例见 [docs/mcp.md](docs/mcp.md) |
+| 断点续传 | 下载 `.part` + `Range` + `If-Range`，完成后校验整文件 sha256 再改名；上传走分片会话（8MB/片），中断后从服务端偏移继续；**服务端重启后会话自动恢复** | 服务端需为 v1.4.0+（重启恢复需 v1.5.0+）；旧服务端自动回退一次性上传 |
+| 局域网发现 | 服务端每 3 秒 UDP 广播（端口 8766，不含口令）；CLI `discover`、安卓端自动扫描列出同网段服务 | 需要同一网段且防火墙放行 UDP 8766；跨网段需 `--any-subnet` |
+| 稳定性（v1.5） | 服务端上传并发上限（默认 4），超出返回 `429` + 中文提示；`rotate-token` 平滑轮换口令，旧口令宽限期内仍可用 | 并发上限当前写死为 4；口令宽限期最长 7 天 |
 | 多空间隔离 | 通过 `spaces.yaml` 把不同目录分成独立空间，可设只读、独立口令 | 只发布/列出单层文件，不展示子目录；越界路径一律拒绝 |
 
 ## 交付文件
@@ -102,10 +104,16 @@
 - 支持点击选择或拖拽上传（多选、进度条、失败可单条重试）、下载、删除（删除前会确认）。
 - 首次访问会提示「您的连接不是私密连接」——这是自签名证书，点「高级 → 继续前往」即可。
 - 右上角可切换空间，默认「全部空间」；只读空间会标注「（只读）」，其中的文件只能下载。
+- **下载断点持久化（v1.5）**：已收字节与 `ETag` 定期写入 IndexedDB（key 为「空间+文件名+大小」），
+  下载中途刷新页面、关掉标签页后再点「下载」会提示「从上次断点继续：xxx」，从断点接着传；
+  服务端文件变了（ETag 不同）会自动丢弃旧分片重新下载。浏览器不支持 IndexedDB 时回退为页面内存。
 
 ### 安卓端
 
-- 安装 APK 后打开，扫码或手输地址 + 口令；连接成功后会自动记住，下次打开自动重连。
+- 安装 APK 后打开，**自动扫描局域网广播**（UDP 8766）并把发现的电脑列在地址栏下方；
+  点选设备即填入地址（已有口令时直接连接）。扫码与手输地址仍然保留作为兜底。
+- 自动发现失败时点「🔍 扫描」重试；仍无结果就检查手机与电脑是否同一 Wi-Fi、电脑是否在广播。
+- 连接成功后会自动记住，下次打开自动重连。
 - 连接成功后会自动拉取空间列表，信息条右侧的下拉可选「全部空间」或某个具体空间；
   选中后列表、上传、下载都只针对该空间；只读空间会标注「（只读）」并禁用「上传文件」。
 - 文件列表显示名称、大小与所属空间；点条目右侧即可下载；上传时会显示进度、速率与百分比，多文件并发上限 2。
@@ -144,6 +152,9 @@ release\lan-transfer-cli.exe get big.bin -o .\downloads --space shared --server 
 # 8) 局域网发现：监听 UDP 广播，输出可直接用于 --server 的地址
 release\lan-transfer-cli.exe discover --timeout 3
 release\lan-transfer-cli.exe discover --timeout 3 --json
+
+# 9) 口令轮换：生成新口令并写回 token.txt，旧口令 30 分钟内仍可用
+release\lan-transfer-cli.exe rotate-token --server https://10.0.0.5:8765 --token-file token.txt --grace 1800
 ```
 
 - 公共参数：`--server`、`--space`、`--token-file`、`--token`、`--json`、`--verify-sha256` / `--no-verify-sha256`、`--resume`。
@@ -154,11 +165,56 @@ release\lan-transfer-cli.exe discover --timeout 3 --json
     完成后校验整文件 sha256 再改名为正式文件。服务端文件已变化时会丢弃 `.part` 从头下载。
 - `discover` 参数：`--timeout`（默认 3 秒）、`--discovery-port`（默认 8766）、`--any-subnet`（不做同网段过滤）；
   默认只接受与本机同一 `/24` 网段的广播。
+- `rotate-token`：`--grace` 指定旧口令宽限期（秒，默认 1800）；带 `--token-file` 时会把新口令写回该文件。
+  服务端同时把新口令与宽限期写入 `settings.json`，重启后仍生效。
 - 环境变量：`LAN_TRANSFER_SERVER`、`LAN_TRANSFER_TOKEN_FILE`、`LAN_TRANSFER_TOKEN`。
 - `--json` 输出包含 `sha256`、`bytes`、`elapsed_ms` 等字段；续传时另有 `resumed`、`resumed_from`、`chunks`。
 - 进度输出到 stderr：`已传/总量 百分比 速率(MB/s) 剩余时间`，不影响 `--json` 的 stdout。
 - 退出码：`0` 成功、`1` 一般失败、`2` 参数错误、`3` 口令/权限错误、`4` 网络错误、`5` sha256 不一致、`6` 文件或空间不存在。
 - CLI 对自签名证书不做主机名校验（与局域网使用场景一致），内容完整性依赖 sha256 校验。
+
+## MCP 服务器（让 AI 直接调用，v1.5 新增）
+
+`desktop-client/lan_transfer_mcp.py` 通过 **stdio** 暴露 7 个工具，AI（Claude Desktop、Cursor 等）
+可以直接「发现服务 → 列空间 → 上传/下载/删除」，网络逻辑完全复用 CLI，不拼命令行。
+
+| 工具 | 作用 |
+|---|---|
+| `health` | 服务是否在线、版本、能力（免口令） |
+| `spaces` | 列出空间 |
+| `ls` | 列出文件 |
+| `put` | 上传（多文件、目录递归、续传、sha256 校验） |
+| `get` | 下载（断点续传、sha256 校验） |
+| `rm` | 删除文件 |
+| `discover` | 局域网 UDP 发现（免口令） |
+
+启动：
+
+```powershell
+python desktop-client\lan_transfer_mcp.py --server https://10.0.0.5:8765 --token-file token.txt --space inbox
+```
+
+Claude Desktop 配置（`%APPDATA%\Claude\claude_desktop_config.json`）：
+
+```json
+{
+  "mcpServers": {
+    "lan-transfer": {
+      "command": "python",
+      "args": [
+        "D:\\文件传输\\desktop-client\\lan_transfer_mcp.py",
+        "--server", "https://10.0.0.5:8765",
+        "--token-file", "D:\\文件传输\\desktop-client\\token.txt",
+        "--space", "inbox"
+      ]
+    }
+  }
+}
+```
+
+- 每个工具返回结构化 JSON（文件列表、字节数、sha256、耗时），失败时 `isError: true` +
+  中文 `message` 与 `error_code`（`UNAUTHORIZED` / `NOT_FOUND` / `NETWORK_ERROR` / `CHECKSUM_MISMATCH` 等）。
+- 完整工具参数、返回示例与「AI 从发现到上传下载」的示例对话脚本见 [docs/mcp.md](docs/mcp.md)。
 
 ## headless 模式（无界面常驻）
 
@@ -181,9 +237,13 @@ python desktop-client\lan_transfer.py --headless --port 8765 --token-file token.
 | `--log-file` | 空 | 指定固定服务日志文件；不填则按天写到 `logs/service-YYYY-MM-DD.log` |
 | `--data-dir` | 空 | 数据目录：文件、证书、配置、PID、日志都放这里；默认是 exe / 脚本所在目录 |
 | `--no-discovery` | 关 | 关闭 UDP 广播发现（默认开启，端口 8766） |
+| `--no-tls` | 关 | 以 HTTP 明文运行（仅本机调试，例如无头浏览器验证网页功能）；默认强制 HTTPS |
 
 - **PID 文件**：`<数据目录>\lan-transfer.pid`，启动成功后写入，收到 SIGINT / SIGTERM / SIGBREAK 优雅退出时删除。
 - 日志为 JSON Lines（每行一条），上传审计单独写入 `logs/upload-audit-YYYY-MM-DD.log`。
+- **分片上传会话持久化（v1.5）**：会话元数据写入 `<数据目录>\upload-sessions.json`，服务重启后自动恢复，
+  客户端续传不受影响；超过 30 分钟无更新的会话照旧清理。
+- **上传并发上限（v1.5）**：同时写入的上传默认最多 4 个，超出的请求返回 `429` 与中文提示。
 - 启动后可访问 `/api/health` 查看版本、实际端口、是否发生端口顺延、空间列表与能力标记。
 
 ## 多空间（目录隔离）
@@ -232,7 +292,8 @@ spaces:
 | `D:\lan-transfer\logs\service-YYYY-MM-DD.log` | 服务日志（JSON Lines，按天切分），启动信息、端口顺延、错误等都在这 |
 | `D:\lan-transfer\logs\upload-audit-YYYY-MM-DD.log` | 上传审计：时间、空间、文件名、字节数、来源 IP、成功/失败、sha256，以及 `resumed`（是否断点续传）、`chunked`（是否分片上传）、`session`（会话 id） |
 | `D:\lan-transfer\lan-transfer.pid` | headless 模式的进程号（正常退出会删除） |
-| `D:\lan-transfer\settings.json` | 桌面端设置（目前保存「在局域网内可见」开关）；headless 默认仍开启，可用 `--no-discovery` 关闭 |
+| `D:\lan-transfer\settings.json` | 桌面端设置（「在局域网内可见」开关、轮换后的口令与旧口令宽限期）；headless 默认仍开启广播，可用 `--no-discovery` 关闭 |
+| `D:\lan-transfer\upload-sessions.json` | 未完成的分片上传会话（v1.5），服务重启后据此恢复；超时会自动清理 |
 | `D:\lan-transfer\spaces.yaml` | 空间配置（首次自动生成） |
 | `D:\lan-transfer\.lan_transfer_cert.pem` / `.lan_transfer_key.pem` | 自签名 HTTPS 证书与私钥（首次启动自动生成） |
 
@@ -258,6 +319,8 @@ spaces:
   安卓端采用 TOFU（首次连接记录证书 SHA-256 指纹），指纹变化会拒绝连接并提示确认。
 - **口令校验**：页面与接口要求 `?k=口令`、Cookie 或 `Authorization: Bearer`；
   比较使用 `hmac.compare_digest`（常量时间），避免计时侧信道。
+- **口令轮换**：`rotate-token` 生成新口令，旧口令在宽限期内（默认 30 分钟）仍可用，
+  便于多设备平滑切换；宽限期记录在 `settings.json`，重启后仍然有效。
 - **路径穿越防护**：上传/下载/删除的文件名都会清洗成单层文件名，
   并校验解析后的真实路径仍在对应空间目录内。
 - **多空间隔离**：只允许访问 `spaces.yaml` 里列出的目录；只读空间拒绝写操作；空间独立口令只能访问自身。
@@ -310,12 +373,19 @@ spaces:
 **8. 传大文件中断了怎么办**
 
 - CLI：文件没传完时保留断点，重新执行同一条命令并加 `--resume` 即可从断点继续（上传按 8MB 分片、下载按 `.part` 字节数）。
-- 网页端：下载失败会自动重试 3 次；仍失败时已收到的部分保留在页面内存，再点一次「下载」即从断点继续（刷新页面后需重新下载）。
+- 网页端：下载失败会自动重试 3 次；已收部分会定期写入 IndexedDB，**刷新页面或关掉标签页后再点「下载」也会从断点继续**；
+  服务端文件变了（ETag 不同）会自动丢弃旧断点重下。
 - 安卓端：下载中断会保留 `.part`，再次点该文件的下载按钮即从断点续传。
 - 大文件建议靠近路由器，避免 Wi-Fi 信号弱导致中断。
 - 服务端文件在中断期间被修改（mtime / 大小变化）时，续传会自动放弃断点、从头下载并使用新的 sha256 校验。
 
-**9. `discover` 找不到局域网内的服务**
+**9. 怎么让 AI 直接调用传输能力**
+
+- 用 `desktop-client/lan_transfer_mcp.py`（stdio MCP 服务器），在 Claude Desktop / Cursor 的
+  `mcpServers` 里配置 `command` + `args` 即可，7 个工具开箱可用。
+- 配置片段、工具返回结构、错误码和完整示例对话见 [docs/mcp.md](docs/mcp.md)。
+
+**10. `discover` 找不到局域网内的服务**
 
 - 确认电脑端「在局域网内可见」开关是「已广播」（或 headless 未加 `--no-discovery`）。
 - 确认防火墙允许 UDP 8766（Windows 首次运行只放行 TCP 时可能漏掉 UDP）。
@@ -330,12 +400,14 @@ spaces:
 │   ├── main_gui.py                  # 桌面 GUI
 │   ├── lan_transfer.py              # 核心服务（HTTP/HTTPS、空间、上传下载、口令、headless）
 │   ├── lan_transfer_cli.py          # 命令行客户端
+│   ├── lan_transfer_mcp.py          # MCP 服务器（stdio，供 AI 直接调用）
 │   ├── static/                      # 网页端（index.html / app.js / style.css / qrcode.js）
 │   ├── gen_mtls.py                  # 生成自签名证书（可选）
 │   ├── run_desktop.bat              # 免打包，直接源码运行
 │   ├── lan-transfer-desktop.spec    # 桌面端 PyInstaller 配置
 │   └── lan-transfer-cli.spec        # 命令行 PyInstaller 配置
 ├── docs/api.md                      # HTTP / API 契约文档
+├── docs/mcp.md                      # MCP 工具、配置与示例对话
 ├── android-app/                     # 安卓端（Kotlin + Gradle）
 │   ├── app/src/main/...             # 源码、布局、资源
 │   └── build_apk.ps1                # 一键编译 + 签名，输出到 release
