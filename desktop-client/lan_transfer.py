@@ -38,7 +38,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "lan-transfer"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.0"
 API_VERSION = 1
 
 TOKEN_CHARS = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -76,6 +76,10 @@ LOG_FILE = ""                        # --log-file 指定的固定日志文件
 
 TOKEN = ""
 TOKEN_FILE = ""                      # --token-file（headless 用）
+
+# 口令轮换：旧口令在宽限期内继续可用，避免客户端被一刀切踢下线
+TOKEN_HISTORY = []                   # [{"token": str, "expires": epoch}]
+TOKEN_HISTORY_LOCK = threading.Lock()
 HOST_NAME = socket.gethostname()
 PORT = 8765
 PORT_REQUESTED = 8765
@@ -91,6 +95,7 @@ HEADLESS = False
 DISCOVERY_PORT = 8766
 DISCOVERY_INTERVAL = 3.0
 DISCOVERY_ENABLED = True
+NO_TLS = False
 _beacon_stop = None
 _beacon_thread = None
 
@@ -101,10 +106,14 @@ SESSION_CLEANUP_INTERVAL = 60
 UPLOAD_SESSIONS = {}
 UPLOAD_SESSIONS_LOCK = threading.Lock()
 _cleanup_thread = None
+# 服务端同时处理的“上传写入”上限（一次性上传与分片 PUT 共用），超出返回 429
+UPLOAD_LIMIT = 4
+UPLOAD_SLOTS = threading.BoundedSemaphore(UPLOAD_LIMIT)
 
 CERT_FILE = os.path.join(BASE_DIR, ".lan_transfer_cert.pem")
 KEY_FILE = os.path.join(BASE_DIR, ".lan_transfer_key.pem")
 SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
+SESSION_FILE = os.path.join(BASE_DIR, "upload-sessions.json")
 
 # 空间：name -> {name, path, mode, token, description}
 SPACES = OrderedDict()
@@ -121,6 +130,7 @@ def configure_data_dir(path):
     """把运行时目录（文件、证书、配置、日志）切到指定目录。"""
     global BASE_DIR, RECEIVE_DIR, PUBLISH_DIR
     global CERT_FILE, KEY_FILE, SPACES_FILE, PID_FILE, LOG_DIR, SETTINGS_FILE
+    global SESSION_FILE
     if not path:
         return
     BASE_DIR = os.path.abspath(os.path.expanduser(path))
@@ -132,6 +142,7 @@ def configure_data_dir(path):
     PID_FILE = os.path.join(BASE_DIR, "lan-transfer.pid")
     LOG_DIR = os.path.join(BASE_DIR, "logs")
     SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
+    SESSION_FILE = os.path.join(BASE_DIR, "upload-sessions.json")
 
 
 DEFAULT_SPACES_YAML = """# 局域网互传 - 空间配置
@@ -521,12 +532,106 @@ def cleanup_upload_sessions(now=None, force_all=False):
             pass
         slog("upload_session_cleanup", session=session["id"], space=session["space"],
              name=session["name"], bytes=session["offset"])
+    if expired:
+        save_upload_sessions()
     return len(expired)
 
 
+def save_upload_sessions():
+    """把未完成的会话元数据落盘，服务重启后可继续接收分片。"""
+    with UPLOAD_SESSIONS_LOCK:
+        data = {"version": 1, "saved": time.time(), "sessions": {}}
+        for sid, session in UPLOAD_SESSIONS.items():
+            data["sessions"][sid] = {
+                "name": session["name"],
+                "space": session["space"],
+                "size": session["size"],
+                "offset": session["offset"],
+                "sha256": session["sha256"],
+                "created": session["created"],
+                "updated": session["updated"],
+                "chunks": session["chunks"],
+                "resumed": session["resumed"],
+                "ip": session.get("ip", ""),
+            }
+    tmp = SESSION_FILE + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(SESSION_FILE), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False)
+        os.replace(tmp, SESSION_FILE)
+    except OSError as exc:
+        slog("upload_sessions_save", level="error", error=str(exc))
+
+
+def load_upload_sessions():
+    """启动时恢复未完成会话；临时文件缺失/偏移不符/已超时的直接丢弃。"""
+    try:
+        with open(SESSION_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return 0
+    now = time.time()
+    restored = 0
+    raw_sessions = data.get("sessions") if isinstance(data, dict) else None
+    if not isinstance(raw_sessions, dict):
+        return 0
+    for sid, item in raw_sessions.items():
+        if not isinstance(item, dict):
+            continue
+        space_name = item.get("space")
+        if space_name not in SPACES:
+            continue
+        try:
+            size = int(item["size"])
+            offset = int(item["offset"])
+            created = float(item.get("created", now))
+            updated = float(item.get("updated", now))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if now - updated > SESSION_IDLE_TIMEOUT:
+            continue
+        tmp = session_temp_path(space_name, sid)
+        if not os.path.isfile(tmp):
+            continue
+        actual = os.path.getsize(tmp)
+        if actual < offset:
+            continue
+        if actual > offset:
+            if offset <= 0:
+                continue
+            truncate_session_temp(tmp, offset)
+        with UPLOAD_SESSIONS_LOCK:
+            UPLOAD_SESSIONS[sid] = {
+                "id": sid,
+                "name": item.get("name") or "upload.bin",
+                "space": space_name,
+                "size": size,
+                "offset": offset,
+                "sha256": str(item.get("sha256") or ""),
+                "created": created,
+                "updated": updated,
+                "chunks": int(item.get("chunks", 0) or 0),
+                "resumed": bool(item.get("resumed")),
+                "ip": item.get("ip", ""),
+                "lock": threading.Lock(),
+            }
+        restored += 1
+    if restored:
+        slog("upload_sessions_restored", count=restored)
+    else:
+        try:
+            os.remove(SESSION_FILE)
+        except OSError:
+            pass
+    return restored
+
+
 def cleanup_orphan_parts():
-    """启动时清理上次崩溃留下的过期 .part 临时文件。"""
+    """启动时清理上次崩溃留下的过期 .part 临时文件（跳过已恢复的会话）。"""
     cutoff = time.time() - SESSION_IDLE_TIMEOUT
+    with UPLOAD_SESSIONS_LOCK:
+        active = {"%s:%s" % (s["space"], s["id"]) for s in UPLOAD_SESSIONS.values()}
     for space in SPACES.values():
         try:
             entries = list(os.scandir(space["path"]))
@@ -534,6 +639,9 @@ def cleanup_orphan_parts():
             continue
         for entry in entries:
             if not (entry.name.startswith(".lt-upload-") and entry.name.endswith(".part")):
+                continue
+            sid = entry.name[len(".lt-upload-"):-len(".part")]
+            if "%s:%s" % (space["name"], sid) in active:
                 continue
             try:
                 if os.path.isfile(entry.path) and entry.stat().st_mtime < cutoff:
@@ -743,6 +851,55 @@ def _constant_compare(a, b):
         return False
 
 
+def previous_token_ok(token):
+    """旧口令在宽限期内仍然有效（口令轮换的平滑过渡）。"""
+    if not token:
+        return False
+    now = time.time()
+    with TOKEN_HISTORY_LOCK:
+        for item in TOKEN_HISTORY:
+            if float(item.get("expires", 0)) > now and \
+                    _constant_compare(token, str(item.get("token", ""))):
+                return True
+    return False
+
+
+def global_token_ok(token):
+    return _constant_compare(token, TOKEN) or previous_token_ok(token)
+
+
+def persist_token_state():
+    """把当前口令与旧口令宽限期写入 settings.json（重启后仍生效）。"""
+    cfg = load_settings()
+    cfg["token"] = TOKEN
+    with TOKEN_HISTORY_LOCK:
+        cfg["token_history"] = [dict(item) for item in TOKEN_HISTORY]
+    save_settings(cfg)
+
+
+def apply_persisted_token():
+    """启动时恢复上次轮换后的口令与旧口令宽限期（token 文件优先）。"""
+    global TOKEN
+    cfg = load_settings()
+    saved = str(cfg.get("token") or "").strip()
+    now = time.time()
+    history = []
+    for item in cfg.get("token_history") or []:
+        if not isinstance(item, dict):
+            continue
+        token = str(item.get("token") or "").strip()
+        try:
+            expires = float(item.get("expires", 0))
+        except (TypeError, ValueError):
+            continue
+        if token and expires > now:
+            history.append({"token": token, "expires": expires})
+    with TOKEN_HISTORY_LOCK:
+        TOKEN_HISTORY[:] = history
+    if saved and not TOKEN_FILE:
+        TOKEN = saved
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "LanTransfer/%s" % APP_VERSION
     protocol_version = "HTTP/1.1"
@@ -800,11 +957,11 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
 
     @staticmethod
     def _global_token_ok(token):
-        return _constant_compare(token, TOKEN)
+        return global_token_ok(token)
 
     @staticmethod
     def _space_token_ok(token, name):
-        if _constant_compare(token, TOKEN):
+        if global_token_ok(token):
             return True
         space = SPACES.get(name)
         return bool(space and space.get("token") and _constant_compare(token, space["token"]))
@@ -826,6 +983,48 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
 
     def _requested_space(self, query):
         return query.get("space", [""])[0].strip()
+
+    def _token_rotate(self, query):
+        """轮换全局口令：生成新口令，旧口令在宽限期内仍然可用。"""
+        global TOKEN
+        token = self._token(query)
+        if not self._global_token_ok(token):
+            self._json({"error": "需要当前全局口令才能轮换", "code": "unauthorized"}, 403)
+            return
+        try:
+            grace = int(query.get("grace", ["1800"])[0])
+        except (TypeError, ValueError):
+            grace = 1800
+        grace = max(60, min(grace, 7 * 24 * 3600))
+
+        new_token = "".join(secrets.choice(TOKEN_CHARS) for _ in range(10))
+        old_token = TOKEN
+        now = time.time()
+        with TOKEN_HISTORY_LOCK:
+            TOKEN_HISTORY[:] = [item for item in TOKEN_HISTORY
+                                if float(item.get("expires", 0)) > now]
+            if old_token:
+                TOKEN_HISTORY.append({"token": old_token, "expires": now + grace})
+        TOKEN = new_token
+        persist_token_state()
+        if TOKEN_FILE:
+            try:
+                with open(TOKEN_FILE, "w", encoding="utf-8") as fh:
+                    fh.write(new_token + "\n")
+                try:
+                    os.chmod(TOKEN_FILE, 0o600)
+                except OSError:
+                    pass
+            except OSError as exc:
+                slog("token_file_write_failed", level="error", error=str(exc))
+        slog("token_rotate", grace=grace)
+        self._json({
+            "ok": True,
+            "token": new_token,
+            "grace_seconds": grace,
+            "previous_valid_until": int(now + grace),
+            "message": "口令已轮换，旧口令在 %d 秒内仍然可用" % grace,
+        })
 
     # ---------------------------- GET ---------------------------- #
     def do_GET(self):
@@ -894,6 +1093,9 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
         path = urllib.parse.unquote(parsed.path)
 
+        if path == "/api/token/rotate":
+            self._token_rotate(query)
+            return
         if path == "/api/upload/session":
             self._upload_session_create(query)
             return
@@ -1137,6 +1339,9 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
                 "upload_session": True,
                 "upload_chunk_size": SESSION_CHUNK_SIZE,
                 "discovery": True,
+                "session_persist": True,
+                "upload_limit": UPLOAD_LIMIT,
+                "token_rotate": True,
             },
         }
 
@@ -1210,6 +1415,12 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
             self._json({"error": "Content-Length 不合法"}, 400)
             return
 
+        if not UPLOAD_SLOTS.acquire(blocking=False):
+            self.close_connection = True
+            self._json({"error": "当前上传任务过多，请稍后重试（服务端并发上限 %d）" % UPLOAD_LIMIT,
+                        "code": "busy"}, 429)
+            return
+
         dest_name = unique_name(name, space["path"])
         dest_path = os.path.join(space["path"], dest_name)
         tmp = None
@@ -1243,6 +1454,7 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
                     os.remove(tmp)
                 except OSError:
                     pass
+            UPLOAD_SLOTS.release()
 
         checksum = digest.hexdigest()
         audit_upload(space["name"], dest_name, length, self.client_address[0], True,
@@ -1327,6 +1539,7 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         }
         with UPLOAD_SESSIONS_LOCK:
             UPLOAD_SESSIONS[session_id] = session
+        save_upload_sessions()
         slog("upload_session_create", session=session_id, space=space_name,
              name=name, bytes=total, ip=self.client_address[0])
         self._json({
@@ -1374,6 +1587,7 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         if not os.path.isfile(tmp):
             with UPLOAD_SESSIONS_LOCK:
                 UPLOAD_SESSIONS.pop(session_id, None)
+            save_upload_sessions()
             self._json({"error": "上传临时文件已丢失，请重新开始", "code": "session"}, 404)
             return
 
@@ -1403,6 +1617,12 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
             self.close_connection = True
             self._json({"error": "分片超出文件总大小", "offset": offset,
                         "size": session["size"]}, 400)
+            return
+
+        if not UPLOAD_SLOTS.acquire(blocking=False):
+            self.close_connection = True
+            self._json({"error": "当前上传任务过多，请稍后重试（服务端并发上限 %d）" % UPLOAD_LIMIT,
+                        "code": "busy"}, 429)
             return
 
         written = 0
@@ -1437,8 +1657,12 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
                  space=session["space"], offset=offset, bytes=written, error=str(exc))
             self._json({"error": "分片接收失败: %s" % exc, "offset": session["offset"]}, 500)
             return
+        finally:
+            UPLOAD_SLOTS.release()
         if session["size"] and session["offset"] > session["size"]:
             session["offset"] = session["size"]
+
+        save_upload_sessions()
 
         slog("upload_session_chunk", session=session_id, space=session["space"],
              offset=offset, bytes=written, total=session["offset"], size=session["size"])
@@ -1463,6 +1687,7 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         if not os.path.isfile(tmp):
             with UPLOAD_SESSIONS_LOCK:
                 UPLOAD_SESSIONS.pop(session_id, None)
+            save_upload_sessions()
             self._json({"error": "上传临时文件已丢失，请重新开始", "code": "session"}, 404)
             return
         if session["size"] and session["offset"] != session["size"]:
@@ -1479,6 +1704,7 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         if expect_sha and checksum != expect_sha:
             with UPLOAD_SESSIONS_LOCK:
                 UPLOAD_SESSIONS.pop(session_id, None)
+            save_upload_sessions()
             try:
                 os.remove(tmp)
             except OSError:
@@ -1502,6 +1728,7 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
             return
         with UPLOAD_SESSIONS_LOCK:
             UPLOAD_SESSIONS.pop(session_id, None)
+        save_upload_sessions()
 
         size = session["offset"]
         audit_upload(space["name"], dest_name, size, self.client_address[0], True,
@@ -1527,6 +1754,7 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
             return
         with UPLOAD_SESSIONS_LOCK:
             UPLOAD_SESSIONS.pop(session_id, None)
+        save_upload_sessions()
         try:
             os.remove(session_temp_path(session["space"], session_id))
         except OSError:
@@ -1733,7 +1961,7 @@ def run(port: int, open_browser: bool, bind: str, spaces_file: str = None) -> Th
     PORT_IS_FALLBACK = chosen != port
 
     tls = ensure_certificate()
-    if tls:
+    if tls and not NO_TLS:
         import ssl
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -1742,7 +1970,10 @@ def run(port: int, open_browser: bool, bind: str, spaces_file: str = None) -> Th
         USE_TLS = True
         SCHEME = "https"
     else:
-        log("  [警告] 未安装 cryptography 库，以 HTTP 明文模式运行。")
+        if NO_TLS:
+            log("  已指定 --no-tls：以 HTTP 明文模式运行（仅建议本机调试使用）。")
+        else:
+            log("  [警告] 未安装 cryptography 库，以 HTTP 明文模式运行。")
         USE_TLS = False
         SCHEME = "http"
 
@@ -1750,6 +1981,7 @@ def run(port: int, open_browser: bool, bind: str, spaces_file: str = None) -> Th
     server.serve_forever_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server.serve_forever_thread.start()
 
+    load_upload_sessions()
     start_session_cleanup()
     if DISCOVERY_ENABLED:
         start_beacon()
@@ -1856,12 +2088,16 @@ def headless_main(argv=None) -> int:
                         help="数据目录（文件、证书、配置、PID、日志）")
     parser.add_argument("--no-discovery", action="store_true",
                         help="关闭局域网 UDP 广播发现")
+    parser.add_argument("--no-tls", action="store_true",
+                        help="以 HTTP 明文运行（仅本机调试；默认强制 HTTPS）")
     args = parser.parse_args(argv)
 
-    global DISCOVERY_ENABLED
+    global DISCOVERY_ENABLED, NO_TLS
     HEADLESS = True
     if args.no_discovery:
         DISCOVERY_ENABLED = False
+    if args.no_tls:
+        NO_TLS = True
     configure_data_dir(args.data_dir)
     if args.spaces_file:
         SPACES_FILE = os.path.abspath(os.path.expanduser(args.spaces_file))
@@ -1871,6 +2107,7 @@ def headless_main(argv=None) -> int:
 
     try:
         TOKEN = read_or_create_token(TOKEN_FILE)
+        apply_persisted_token()
         load_spaces(SPACES_FILE)
         server = run(args.port, False, args.bind, spaces_file=SPACES_FILE)
     except KeyboardInterrupt:
@@ -1938,17 +2175,22 @@ def main() -> None:
     parser.add_argument("--data-dir", default="", help="数据目录")
     parser.add_argument("--no-discovery", action="store_true",
                         help="关闭局域网 UDP 广播发现")
+    parser.add_argument("--no-tls", action="store_true",
+                        help="以 HTTP 明文运行（仅本机调试；默认强制 HTTPS）")
     args = parser.parse_args()
 
-    global TOKEN, TOKEN_FILE, LOG_FILE, SPACES_FILE, DISCOVERY_ENABLED
+    global TOKEN, TOKEN_FILE, LOG_FILE, SPACES_FILE, DISCOVERY_ENABLED, NO_TLS
     if args.no_discovery:
         DISCOVERY_ENABLED = False
+    if args.no_tls:
+        NO_TLS = True
     configure_data_dir(args.data_dir)
     if args.spaces_file:
         SPACES_FILE = os.path.abspath(os.path.expanduser(args.spaces_file))
     TOKEN_FILE = os.path.abspath(os.path.expanduser(args.token_file)) if args.token_file else ""
     TOKEN = read_or_create_token(TOKEN_FILE) if TOKEN_FILE else \
         "".join(secrets.choice(TOKEN_CHARS) for _ in range(10))
+    apply_persisted_token()
 
     server = run(args.port, args.open, args.bind, spaces_file=SPACES_FILE)
     try:
