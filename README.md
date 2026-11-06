@@ -232,7 +232,7 @@ spaces:
 | `D:\lan-transfer\logs\service-YYYY-MM-DD.log` | 服务日志（JSON Lines，按天切分），启动信息、端口顺延、错误等都在这 |
 | `D:\lan-transfer\logs\upload-audit-YYYY-MM-DD.log` | 上传审计：时间、空间、文件名、字节数、来源 IP、成功/失败、sha256，以及 `resumed`（是否断点续传）、`chunked`（是否分片上传）、`session`（会话 id） |
 | `D:\lan-transfer\lan-transfer.pid` | headless 模式的进程号（正常退出会删除） |
-| `D:\lan-transfer\settings.json` | 桌面端设置（目前保存「在局域网内可见」开关）；headless 同样会读取 |
+| `D:\lan-transfer\settings.json` | 桌面端设置（目前保存「在局域网内可见」开关）；headless 默认仍开启，可用 `--no-discovery` 关闭 |
 | `D:\lan-transfer\spaces.yaml` | 空间配置（首次自动生成） |
 | `D:\lan-transfer\.lan_transfer_cert.pem` / `.lan_transfer_key.pem` | 自签名 HTTPS 证书与私钥（首次启动自动生成） |
 
