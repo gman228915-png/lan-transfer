@@ -17,6 +17,7 @@
 """
 
 import argparse
+import email.utils
 import hashlib
 import hmac
 import json
@@ -37,7 +38,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "lan-transfer"
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.4.0"
 API_VERSION = 1
 
 TOKEN_CHARS = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -86,8 +87,24 @@ USE_TLS = False
 SCHEME = "http"
 HEADLESS = False
 
+# UDP 局域网发现（beacon 不含口令）
+DISCOVERY_PORT = 8766
+DISCOVERY_INTERVAL = 3.0
+DISCOVERY_ENABLED = True
+_beacon_stop = None
+_beacon_thread = None
+
+# 分片上传会话
+SESSION_IDLE_TIMEOUT = 30 * 60          # 30 分钟没动静就清理
+SESSION_CHUNK_SIZE = 8 * 1024 * 1024    # 建议分片大小（客户端可自定）
+SESSION_CLEANUP_INTERVAL = 60
+UPLOAD_SESSIONS = {}
+UPLOAD_SESSIONS_LOCK = threading.Lock()
+_cleanup_thread = None
+
 CERT_FILE = os.path.join(BASE_DIR, ".lan_transfer_cert.pem")
 KEY_FILE = os.path.join(BASE_DIR, ".lan_transfer_key.pem")
+SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
 
 # 空间：name -> {name, path, mode, token, description}
 SPACES = OrderedDict()
@@ -103,7 +120,7 @@ AUDIT_LOCK = threading.Lock()
 def configure_data_dir(path):
     """把运行时目录（文件、证书、配置、日志）切到指定目录。"""
     global BASE_DIR, RECEIVE_DIR, PUBLISH_DIR
-    global CERT_FILE, KEY_FILE, SPACES_FILE, PID_FILE, LOG_DIR
+    global CERT_FILE, KEY_FILE, SPACES_FILE, PID_FILE, LOG_DIR, SETTINGS_FILE
     if not path:
         return
     BASE_DIR = os.path.abspath(os.path.expanduser(path))
@@ -114,6 +131,7 @@ def configure_data_dir(path):
     SPACES_FILE = os.path.join(BASE_DIR, "spaces.yaml")
     PID_FILE = os.path.join(BASE_DIR, "lan-transfer.pid")
     LOG_DIR = os.path.join(BASE_DIR, "logs")
+    SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
 
 
 DEFAULT_SPACES_YAML = """# 局域网互传 - 空间配置
@@ -254,6 +272,99 @@ def space_by_name(name):
 
 
 # --------------------------------------------------------------------------- #
+# 本地设置 / UDP 局域网发现
+# --------------------------------------------------------------------------- #
+def load_settings():
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(data):
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(SETTINGS_FILE)), exist_ok=True)
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+    except OSError:
+        pass
+
+
+def set_discovery_enabled(enabled, persist=True):
+    """开关局域网 UDP 广播；persist=True 时写入 settings.json。"""
+    global DISCOVERY_ENABLED
+    DISCOVERY_ENABLED = bool(enabled)
+    if persist:
+        cfg = load_settings()
+        cfg["discovery"] = DISCOVERY_ENABLED
+        save_settings(cfg)
+    if DISCOVERY_ENABLED:
+        start_beacon()
+    else:
+        stop_beacon()
+    slog("discovery_toggle", enabled=DISCOVERY_ENABLED)
+    return DISCOVERY_ENABLED
+
+
+def start_beacon():
+    """周期性向局域网广播 UDP beacon（只含元信息，不含口令）。"""
+    global _beacon_stop, _beacon_thread
+    if _beacon_thread is not None and _beacon_thread.is_alive():
+        return
+    stop = threading.Event()
+    _beacon_stop = stop
+
+    def loop():
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        try:
+            if BIND_ADDR and BIND_ADDR not in ("0.0.0.0", "::", ""):
+                sock.bind((BIND_ADDR, 0))
+        except OSError:
+            pass
+        while not stop.is_set():
+            if DISCOVERY_ENABLED:
+                try:
+                    payload = {
+                        "app": APP_NAME,
+                        "version": APP_VERSION,
+                        "port": PORT,
+                        "scheme": SCHEME,
+                        "spaces": len(SPACES),
+                        "default_space": DEFAULT_SPACE_NAME,
+                        "fallback": PORT_IS_FALLBACK,
+                        "host": HOST_NAME,
+                        "ip": local_ip(),
+                        "discovery_port": DISCOVERY_PORT,
+                    }
+                    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                    sock.sendto(data, ("255.255.255.255", DISCOVERY_PORT))
+                except OSError:
+                    pass
+            if stop.wait(DISCOVERY_INTERVAL):
+                break
+        try:
+            sock.close()
+        except OSError:
+            pass
+
+    _beacon_thread = threading.Thread(target=loop, daemon=True, name="lan-beacon")
+    _beacon_thread.start()
+    slog("discovery_started", port=DISCOVERY_PORT, interval=DISCOVERY_INTERVAL)
+
+
+def stop_beacon():
+    global _beacon_thread, _beacon_stop
+    if _beacon_stop:
+        _beacon_stop.set()
+    _beacon_thread = None
+    _beacon_stop = None
+    slog("discovery_stopped")
+
+
+# --------------------------------------------------------------------------- #
 # TLS 证书
 # --------------------------------------------------------------------------- #
 def ensure_certificate():
@@ -353,7 +464,8 @@ def slog(event, level="info", **fields):
         pass
 
 
-def audit_upload(space, name, size, ip, ok, sha256="", error=""):
+def audit_upload(space, name, size, ip, ok, sha256="", error="",
+                 resumed=False, chunked=False, session=""):
     """上传审计日志（按天切分，单独文件）。"""
     record = {
         "time": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -365,6 +477,9 @@ def audit_upload(space, name, size, ip, ok, sha256="", error=""):
         "success": bool(ok),
         "sha256": sha256,
         "error": error,
+        "resumed": bool(resumed),
+        "chunked": bool(chunked),
+        "session": session,
     }
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
@@ -374,6 +489,77 @@ def audit_upload(space, name, size, ip, ok, sha256="", error=""):
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         pass
+
+
+def session_temp_path(space_name, session_id):
+    return os.path.join(SPACES[space_name]["path"], ".lt-upload-%s.part" % session_id)
+
+
+def truncate_session_temp(path, size):
+    """把分片临时文件截断到已确认的偏移，丢弃半截分片，避免续传数据错位。"""
+    try:
+        with open(path, "r+b") as fh:
+            fh.truncate(size)
+    except OSError:
+        pass
+
+
+def cleanup_upload_sessions(now=None, force_all=False):
+    """清理超时未完成的分片上传会话与临时文件。"""
+    now = now or time.time()
+    expired = []
+    with UPLOAD_SESSIONS_LOCK:
+        for sid, session in list(UPLOAD_SESSIONS.items()):
+            if force_all or now - session["updated"] > SESSION_IDLE_TIMEOUT:
+                expired.append(UPLOAD_SESSIONS.pop(sid))
+    for session in expired:
+        path = session_temp_path(session["space"], session["id"])
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+        slog("upload_session_cleanup", session=session["id"], space=session["space"],
+             name=session["name"], bytes=session["offset"])
+    return len(expired)
+
+
+def cleanup_orphan_parts():
+    """启动时清理上次崩溃留下的过期 .part 临时文件。"""
+    cutoff = time.time() - SESSION_IDLE_TIMEOUT
+    for space in SPACES.values():
+        try:
+            entries = list(os.scandir(space["path"]))
+        except OSError:
+            continue
+        for entry in entries:
+            if not (entry.name.startswith(".lt-upload-") and entry.name.endswith(".part")):
+                continue
+            try:
+                if os.path.isfile(entry.path) and entry.stat().st_mtime < cutoff:
+                    os.remove(entry.path)
+                    slog("upload_part_cleanup", space=space["name"], name=entry.name)
+            except OSError:
+                pass
+
+
+def start_session_cleanup():
+    global _cleanup_thread
+    if _cleanup_thread is not None and _cleanup_thread.is_alive():
+        return
+
+    def loop():
+        cleanup_orphan_parts()
+        while True:
+            time.sleep(SESSION_CLEANUP_INTERVAL)
+            try:
+                cleanup_upload_sessions()
+            except Exception:
+                pass
+
+    _cleanup_thread = threading.Thread(target=loop, daemon=True,
+                                       name="upload-session-cleanup")
+    _cleanup_thread.start()
 
 
 def safe_name(raw: str) -> str:
@@ -558,7 +744,7 @@ def _constant_compare(a, b):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "LanTransfer/1.2"
+    server_version = "LanTransfer/%s" % APP_VERSION
     protocol_version = "HTTP/1.1"
 
     # ---------------------------- 基础响应 ---------------------------- #
@@ -692,6 +878,10 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
             self._handle_hash(token, query)
             return
 
+        if path.startswith("/api/upload/session/"):
+            self._upload_session_status(token, path)
+            return
+
         if path == "/download":
             self._download(token, query)
             return
@@ -702,7 +892,15 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
     def do_POST(self):
         parsed = urllib.parse.urlsplit(self.path)
         query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
-        if urllib.parse.unquote(parsed.path) != "/api/upload":
+        path = urllib.parse.unquote(parsed.path)
+
+        if path == "/api/upload/session":
+            self._upload_session_create(query)
+            return
+        if path.startswith("/api/upload/session/") and path.endswith("/commit"):
+            self._upload_session_commit(query, path)
+            return
+        if path != "/api/upload":
             self._send(404, "404 Not Found")
             return
         token = self._token(query)
@@ -719,11 +917,25 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
             return
         self._upload(query, space)
 
+    # ---------------------------- PUT（分片上传） ---------------------------- #
+    def do_PUT(self):
+        parsed = urllib.parse.urlsplit(self.path)
+        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        path = urllib.parse.unquote(parsed.path)
+        if path.startswith("/api/upload/session/") and not path.endswith("/commit"):
+            self._upload_session_chunk(query, path)
+            return
+        self._send(404, "404 Not Found")
+
     # ---------------------------- DELETE ---------------------------- #
     def do_DELETE(self):
         parsed = urllib.parse.urlsplit(self.path)
         query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
-        if urllib.parse.unquote(parsed.path) != "/api/files":
+        path = urllib.parse.unquote(parsed.path)
+        if path.startswith("/api/upload/session/"):
+            self._upload_session_abort(query, path)
+            return
+        if path != "/api/files":
             self._send(404, "404 Not Found")
             return
         token = self._token(query)
@@ -907,6 +1119,11 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
             "spaces": len(SPACES),
             "default_space": DEFAULT_SPACE_NAME,
             "token_required": True,
+            "discovery": {
+                "enabled": DISCOVERY_ENABLED,
+                "port": DISCOVERY_PORT,
+                "interval": DISCOVERY_INTERVAL,
+            },
             "capabilities": {
                 "spaces": True,
                 "per_space_token": True,
@@ -914,8 +1131,12 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
                 "sha256": True,
                 "upload_audit": True,
                 "http_range": True,
+                "if_range": True,
                 "headless": True,
-                "resume": False,
+                "resume": True,
+                "upload_session": True,
+                "upload_chunk_size": SESSION_CHUNK_SIZE,
+                "discovery": True,
             },
         }
 
@@ -944,6 +1165,11 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
             "port_changed": PORT_IS_FALLBACK,
             "version": APP_VERSION,
             "default_space": DEFAULT_SPACE_NAME,
+            "discovery": {
+                "enabled": DISCOVERY_ENABLED,
+                "port": DISCOVERY_PORT,
+                "interval": DISCOVERY_INTERVAL,
+            },
             "spaces": [
                 {"name": name, "mode": space["mode"], "path": space["path"],
                  "description": space["description"]}
@@ -1027,6 +1253,288 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         self._json({"ok": True, "name": dest_name, "size": length,
                     "space": space["name"], "sha256": checksum})
 
+    # ---------------------------- 分片上传会话 ---------------------------- #
+    @staticmethod
+    def _session_id(path, suffix=""):
+        pattern = r"^/api/upload/session/([A-Za-z0-9_-]{1,64})%s$" % suffix
+        match = re.match(pattern, path)
+        return match.group(1) if match else ""
+
+    def _session_error(self, token, query, session_id, need_write=False):
+        """返回 (session, space) 或 (None, None)，并已发送错误响应。"""
+        session = UPLOAD_SESSIONS.get(session_id)
+        if not session:
+            self._json({"error": "上传会话不存在或已过期，请重新开始", "code": "session"},
+                       404)
+            return None, None
+        space, err = self._space_access(token, session["space"])
+        if err:
+            self._json({"error": err[1]}, err[0])
+            return None, None
+        if need_write and space["mode"] == "ro":
+            self._json({"error": "空间 %s 为只读（mode=ro），不允许上传" % space["name"],
+                        "code": "read_only"}, 403)
+            return None, None
+        return session, space
+
+    def _upload_session_create(self, query):
+        token = self._token(query)
+        raw = query.get("name", [""])[0]
+        name = safe_name(raw) if raw.strip() else ""
+        if not name:
+            self._json({"error": "缺少文件名"}, 400)
+            return
+        space_name = self._requested_space(query) or DEFAULT_SPACE_NAME
+        space, err = self._space_access(token, space_name)
+        if err:
+            self._json({"error": err[1], "code": "space"}, err[0])
+            return
+        if space["mode"] == "ro":
+            self._json({"error": "空间 %s 为只读（mode=ro），不允许上传" % space_name,
+                        "code": "read_only"}, 403)
+            return
+        try:
+            total = int(query.get("size", ["0"])[0])
+        except ValueError:
+            total = -1
+        if total < 0:
+            self._json({"error": "size 不合法"}, 400)
+            return
+        expect_sha = query.get("sha256", [""])[0].strip().lower()
+
+        session_id = secrets.token_hex(9)
+        tmp = session_temp_path(space_name, session_id)
+        try:
+            with open(tmp, "wb"):
+                pass
+        except OSError as exc:
+            self._json({"error": "无法创建上传临时文件: %s" % exc}, 500)
+            return
+        now = time.time()
+        session = {
+            "id": session_id,
+            "name": name,
+            "space": space_name,
+            "size": total,
+            "offset": 0,
+            "sha256": expect_sha,
+            "created": now,
+            "updated": now,
+            "chunks": 0,
+            "resumed": False,
+            "ip": self.client_address[0],
+            "lock": threading.Lock(),
+        }
+        with UPLOAD_SESSIONS_LOCK:
+            UPLOAD_SESSIONS[session_id] = session
+        slog("upload_session_create", session=session_id, space=space_name,
+             name=name, bytes=total, ip=self.client_address[0])
+        self._json({
+            "ok": True,
+            "upload_id": session_id,
+            "offset": 0,
+            "size": total,
+            "chunk_size": SESSION_CHUNK_SIZE,
+            "space": space_name,
+            "name": name,
+            "expires_in": SESSION_IDLE_TIMEOUT,
+        })
+
+    def _upload_session_status(self, token, path):
+        session_id = self._session_id(path)
+        if not session_id:
+            self._json({"error": "会话 id 不合法"}, 400)
+            return
+        session, _ = self._session_error(token, {}, session_id)
+        if not session:
+            return
+        self._json({
+            "ok": True,
+            "upload_id": session_id,
+            "offset": session["offset"],
+            "size": session["size"],
+            "chunk_size": SESSION_CHUNK_SIZE,
+            "space": session["space"],
+            "name": session["name"],
+            "chunks": session["chunks"],
+            "resumed": session["resumed"],
+            "expires_in": max(0, int(SESSION_IDLE_TIMEOUT - (time.time() - session["updated"]))),
+        })
+
+    def _upload_session_chunk(self, query, path):
+        token = self._token(query)
+        session_id = self._session_id(path)
+        if not session_id:
+            self._json({"error": "会话 id 不合法"}, 400)
+            return
+        session, space = self._session_error(token, query, session_id, need_write=True)
+        if not session:
+            return
+        tmp = session_temp_path(session["space"], session_id)
+        if not os.path.isfile(tmp):
+            with UPLOAD_SESSIONS_LOCK:
+                UPLOAD_SESSIONS.pop(session_id, None)
+            self._json({"error": "上传临时文件已丢失，请重新开始", "code": "session"}, 404)
+            return
+
+        raw_offset = query.get("offset", [""])[0].strip()
+        try:
+            offset = int(raw_offset) if raw_offset else session["offset"]
+        except ValueError:
+            self._json({"error": "offset 不合法"}, 400)
+            return
+        if offset != session["offset"]:
+            self.close_connection = True
+            self._json({"error": "offset 不匹配", "offset": session["offset"],
+                        "size": session["size"], "code": "offset"}, 409)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "-1"))
+        except ValueError:
+            length = -1
+        if length < 0:
+            self.close_connection = True
+            self._json({"error": "缺少 Content-Length"}, 411)
+            return
+        if length == 0:
+            self._json({"error": "分片为空"}, 400)
+            return
+        if session["size"] and offset + length > session["size"]:
+            self.close_connection = True
+            self._json({"error": "分片超出文件总大小", "offset": offset,
+                        "size": session["size"]}, 400)
+            return
+
+        written = 0
+        try:
+            with session["lock"]:
+                # 上一次分片可能只写了一半（客户端被杀/断网），先截断到确认偏移
+                try:
+                    current_size = os.path.getsize(tmp)
+                except OSError:
+                    current_size = offset
+                if current_size != offset:
+                    truncate_session_temp(tmp, offset)
+                with open(tmp, "ab") as out:
+                    remaining = length
+                    while remaining > 0:
+                        block = self.rfile.read(min(BUF_SIZE, remaining))
+                        if not block:
+                            raise ConnectionError("连接中断")
+                        out.write(block)
+                        written += len(block)
+                        remaining -= len(block)
+                session["offset"] = offset + written
+                session["updated"] = time.time()
+                session["chunks"] += 1
+                if query.get("resumed", [""])[0] == "1":
+                    session["resumed"] = True
+        except (OSError, ConnectionError) as exc:
+            # 丢弃本片已写入的半截数据，保证后续续传从 offset 继续
+            truncate_session_temp(tmp, offset)
+            self.close_connection = True
+            slog("upload_session_chunk", level="error", session=session_id,
+                 space=session["space"], offset=offset, bytes=written, error=str(exc))
+            self._json({"error": "分片接收失败: %s" % exc, "offset": session["offset"]}, 500)
+            return
+        if session["size"] and session["offset"] > session["size"]:
+            session["offset"] = session["size"]
+
+        slog("upload_session_chunk", session=session_id, space=session["space"],
+             offset=offset, bytes=written, total=session["offset"], size=session["size"])
+        self._json({
+            "ok": True,
+            "upload_id": session_id,
+            "offset": session["offset"],
+            "size": session["size"],
+            "received": written,
+        })
+
+    def _upload_session_commit(self, query, path):
+        token = self._token(query)
+        session_id = self._session_id(path, "/commit")
+        if not session_id:
+            self._json({"error": "会话 id 不合法"}, 400)
+            return
+        session, space = self._session_error(token, query, session_id, need_write=True)
+        if not session:
+            return
+        tmp = session_temp_path(session["space"], session_id)
+        if not os.path.isfile(tmp):
+            with UPLOAD_SESSIONS_LOCK:
+                UPLOAD_SESSIONS.pop(session_id, None)
+            self._json({"error": "上传临时文件已丢失，请重新开始", "code": "session"}, 404)
+            return
+        if session["size"] and session["offset"] != session["size"]:
+            self._json({"error": "上传未完成", "offset": session["offset"],
+                        "size": session["size"], "code": "incomplete"}, 409)
+            return
+
+        expect_sha = session["sha256"] or query.get("sha256", [""])[0].strip().lower()
+        try:
+            checksum = sha256_file(tmp)
+        except OSError as exc:
+            self._json({"error": "校验失败: %s" % exc}, 500)
+            return
+        if expect_sha and checksum != expect_sha:
+            with UPLOAD_SESSIONS_LOCK:
+                UPLOAD_SESSIONS.pop(session_id, None)
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            audit_upload(session["space"], session["name"], session["offset"],
+                         self.client_address[0], False, sha256=checksum,
+                         error="sha256 不一致", resumed=session["resumed"],
+                         chunked=True, session=session_id)
+            slog("upload_session_commit", level="error", session=session_id,
+                 space=session["space"], name=session["name"], error="sha256 不一致")
+            self._json({"error": "sha256 校验失败", "sha256": checksum,
+                        "expected": expect_sha}, 422)
+            return
+
+        dest_name = unique_name(session["name"], space["path"])
+        dest_path = os.path.join(space["path"], dest_name)
+        try:
+            os.replace(tmp, dest_path)
+        except OSError as exc:
+            self._json({"error": "保存文件失败: %s" % exc}, 500)
+            return
+        with UPLOAD_SESSIONS_LOCK:
+            UPLOAD_SESSIONS.pop(session_id, None)
+
+        size = session["offset"]
+        audit_upload(space["name"], dest_name, size, self.client_address[0], True,
+                     sha256=checksum, resumed=session["resumed"], chunked=True,
+                     session=session_id)
+        slog("upload_session_commit", session=session_id, space=space["name"],
+             name=dest_name, bytes=size, chunks=session["chunks"],
+             resumed=session["resumed"], sha256=checksum)
+        log("  分片上传完成 %s -> %s (%s, %d 片)"
+            % (dest_name, space["name"], human_size(size), session["chunks"]))
+        self._json({"ok": True, "name": dest_name, "size": size, "space": space["name"],
+                    "sha256": checksum, "chunks": session["chunks"],
+                    "resumed": session["resumed"], "upload_id": session_id})
+
+    def _upload_session_abort(self, query, path):
+        token = self._token(query)
+        session_id = self._session_id(path)
+        if not session_id:
+            self._json({"error": "会话 id 不合法"}, 400)
+            return
+        session, _ = self._session_error(token, query, session_id)
+        if not session:
+            return
+        with UPLOAD_SESSIONS_LOCK:
+            UPLOAD_SESSIONS.pop(session_id, None)
+        try:
+            os.remove(session_temp_path(session["space"], session_id))
+        except OSError:
+            pass
+        slog("upload_session_abort", session=session_id, space=session["space"],
+             name=session["name"], bytes=session["offset"])
+        self._json({"ok": True, "upload_id": session_id})
+
     # ---------------------------- 下载 ---------------------------- #
     def _download(self, token, query):
         raw = query.get("name", [""])[0]
@@ -1064,9 +1572,19 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         disposition = "%s; filename=\"%s\"; filename*=UTF-8''%s" % (
             "inline" if inline else "attachment", quoted, quoted)
 
+        stat = os.stat(path)
+        etag = '"%d-%d"' % (size, int(stat.st_mtime))
+        last_modified = email.utils.formatdate(stat.st_mtime, usegmt=True)
+
         start, end = 0, size - 1
         status = 200
         range_header = self.headers.get("Range", "")
+        if_range = self.headers.get("If-Range", "").strip()
+        if range_header.startswith("bytes=") and if_range:
+            # If-Range 不匹配（文件已变化）时按完整文件返回 200
+            same_etag = if_range.strip('"') == etag.strip('"')
+            if not same_etag and if_range != last_modified:
+                range_header = ""
         if range_header.startswith("bytes="):
             try:
                 spec = range_header[6:].split(",")[0].strip()
@@ -1082,7 +1600,8 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
                 status = 206
             except ValueError:
                 self._send(416, "range not satisfiable",
-                           extra={"Content-Range": "bytes */%d" % size})
+                           extra={"Content-Range": "bytes */%d" % size,
+                                  "Accept-Ranges": "bytes", "ETag": etag})
                 return
 
         length = 0 if size == 0 else end - start + 1
@@ -1090,6 +1609,9 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         extra = {
             "Accept-Ranges": "bytes",
             "X-Space": space["name"],
+            "X-File-Size": str(size),
+            "ETag": etag,
+            "Last-Modified": last_modified,
         }
         if query.get("checksum", [""])[0] in ("1", "true"):
             try:
@@ -1151,6 +1673,10 @@ def banner(url: str, ip_url: str) -> None:
     log("  空间(%d):" % len(SPACES))
     for name, space in SPACES.items():
         log("    %-10s %-2s %s" % (name, space["mode"], space["path"]))
+    log("")
+    log("  局域网发现: %s（UDP %d）" % (
+        "已广播，可用 CLI discover 查找" if DISCOVERY_ENABLED else "已关闭",
+        DISCOVERY_PORT))
     log("")
     log("  提示: 手机与电脑需连接同一个 Wi-Fi；首次运行若弹出")
     log("        Windows 防火墙提示，请选择 \"允许访问\"。")
@@ -1224,6 +1750,12 @@ def run(port: int, open_browser: bool, bind: str, spaces_file: str = None) -> Th
     server.serve_forever_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server.serve_forever_thread.start()
 
+    start_session_cleanup()
+    if DISCOVERY_ENABLED:
+        start_beacon()
+    else:
+        stop_beacon()
+
     ip = local_ip()
     web_url = build_url()
     share_url = build_url(ip)
@@ -1285,9 +1817,31 @@ def remove_pid(path, pid):
         pass
 
 
+def _ensure_usable_streams():
+    """PyInstaller 的窗口版（console=False）里 sys.stdout/stderr 是 None，
+    任何未被捕获的写入都会连带报错。无界面模式下补一个空实现，保证服务稳定运行。"""
+    class _NullStream:
+        def write(self, *args, **kwargs):
+            return 0
+
+        def flush(self):
+            pass
+
+        def isatty(self):
+            return False
+
+        encoding = "utf-8"
+
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name, None) is None:
+            setattr(sys, name, _NullStream())
+
+
 def headless_main(argv=None) -> int:
     """无界面常驻模式。返回进程退出码。"""
     global TOKEN, TOKEN_FILE, LOG_FILE, HEADLESS, SPACES_FILE
+
+    _ensure_usable_streams()
 
     parser = argparse.ArgumentParser(prog="lan_transfer.py --headless",
                                      description="局域网互传 - 无界面服务")
@@ -1300,9 +1854,14 @@ def headless_main(argv=None) -> int:
     parser.add_argument("--log-file", default="", help="结构化日志文件（默认按天切分）")
     parser.add_argument("--data-dir", default="",
                         help="数据目录（文件、证书、配置、PID、日志）")
+    parser.add_argument("--no-discovery", action="store_true",
+                        help="关闭局域网 UDP 广播发现")
     args = parser.parse_args(argv)
 
+    global DISCOVERY_ENABLED
     HEADLESS = True
+    if args.no_discovery:
+        DISCOVERY_ENABLED = False
     configure_data_dir(args.data_dir)
     if args.spaces_file:
         SPACES_FILE = os.path.abspath(os.path.expanduser(args.spaces_file))
@@ -1351,6 +1910,8 @@ def headless_main(argv=None) -> int:
         server.server_close()
     except Exception:
         pass
+    stop_beacon()
+    cleanup_upload_sessions(force_all=True)
     remove_pid(PID_FILE, pid)
     slog("server_stop", pid=pid)
     log("服务已停止。")
@@ -1375,9 +1936,13 @@ def main() -> None:
     parser.add_argument("--token-file", default="", help="从文件读取固定口令")
     parser.add_argument("--spaces-file", default="", help="空间配置（yaml/json）")
     parser.add_argument("--data-dir", default="", help="数据目录")
+    parser.add_argument("--no-discovery", action="store_true",
+                        help="关闭局域网 UDP 广播发现")
     args = parser.parse_args()
 
-    global TOKEN, TOKEN_FILE, LOG_FILE, SPACES_FILE
+    global TOKEN, TOKEN_FILE, LOG_FILE, SPACES_FILE, DISCOVERY_ENABLED
+    if args.no_discovery:
+        DISCOVERY_ENABLED = False
     configure_data_dir(args.data_dir)
     if args.spaces_file:
         SPACES_FILE = os.path.abspath(os.path.expanduser(args.spaces_file))
@@ -1392,6 +1957,7 @@ def main() -> None:
     except KeyboardInterrupt:
         log("")
         log("服务已停止。")
+        stop_beacon()
         try:
             server.shutdown()
             server.server_close()
