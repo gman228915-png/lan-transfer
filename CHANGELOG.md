@@ -1,5 +1,43 @@
 # 更新记录
 
+## v1.4.0（2026-11-06）
+
+### 新增
+
+- **下载断点续传**：`get --resume` 正式实装。客户端使用 `<文件名>.part` + `Range` / `If-Range` 从断点继续，
+  完成后校验整文件 sha256 再改名为正式文件；服务端返回 `206` + 正确的 `Content-Range`、
+  `Accept-Ranges`、`ETag`、`Last-Modified`，越界返回 `416`；文件已变化时忽略 Range 返回 `200`。
+- **上传断点续传（分片会话）**：新增 `POST /api/upload/session`（申请上传 id）、
+  `PUT /api/upload/session/<id>?offset=`（按片追加，偏移不符返回 `409`）、
+  `GET /api/upload/session/<id>`（查询偏移，供崩溃后恢复）、`POST …/commit`（校验 offset/sha256 后落盘）、
+  `DELETE …`（放弃上传）。默认分片 8MB；会话 30 分钟无分片自动清理，启动时清理遗留 `.lt-upload-*.part`。
+- **网页端**：下载改为 `fetch` + `ReadableStream` 分片接收，失败自动重试 3 次，仍失败可再点下载从断点继续；
+  上传显示速率（MB/s）与剩余时间，并发上限 2。
+- **安卓端**：连接后拉取 `/api/spaces` 显示空间下拉（「全部空间」保持旧行为）；
+  选中空间后列表/上传/下载均带 `space`；只读空间禁用上传并提示；
+  下载使用 `.part` + `Range` 断点续传；上传并发上限 2，进度显示速率与剩余时间。
+- **局域网自动发现**：服务端每 3 秒向 UDP 8766 广播 beacon（版本、端口、空间数量、
+  是否端口顺延，不含口令）；CLI 新增 `discover`（默认只接受同 `/24` 网段广播，`--any-subnet` 关闭过滤）；
+  GUI 新增「在局域网内可见（UDP 广播发现）」开关，默认开启，状态持久化到 `settings.json`；
+  headless 新增 `--no-discovery`。
+- **上传审计**：`logs/upload-audit-*.log` 增加 `resumed`、`chunked`、`session` 字段。
+- **CLI 进度**：上传/下载在 stderr 显示已传/总量、百分比、速率（MB/s）与剩余时间；
+  异常中断给出中文提示并说明如何续传。
+
+### 兼容
+
+- 旧客户端不传新参数仍可用：一次性 `POST /api/upload` 保留；不带 `space` 的列表/上传/下载仍走原有行为。
+- 旧服务端（无会话接口）时，CLI `put --resume` 自动回退一次性上传。
+- `/api/health` 新增 `discovery` 与 capabilities（`http_range`、`if_range`、`resume`、
+  `upload_session`、`upload_chunk_size`、`discovery`），老字段不变。
+
+### 已知限制 / 计划中
+
+- 网页端下载断点保存在页面内存，**刷新页面后需重新下载**（后续计划改用 IndexedDB 持久化分片）。
+- 安卓端暂无「局域网发现」入口，仍需扫码或手输地址（后续计划接入 UDP 发现）。
+- 分片上传会话不会跨服务重启恢复（重启后请重新开始上传）。
+- Android APK 的「空间下拉」依赖应用重新编译；未重新构建 APK 的旧安装包仍是固定默认空间。
+
 ## v1.3.1（2026-11-05）
 
 ### 修复

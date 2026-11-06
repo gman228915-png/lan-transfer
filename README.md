@@ -3,17 +3,19 @@
 电脑上双击一个 exe 就能在局域网里开一个文件共享服务：手机和电脑连同一个 Wi-Fi，
 扫码或输入地址即可双向传文件，**不经过外网、不需要账号、不用数据线**。
 
-**当前版本：v1.3.1（2026-11-05）** ｜ [更新记录](CHANGELOG.md) ｜ [HTTP 接口文档](docs/api.md) ｜ [GitHub 仓库](https://github.com/gman228915-png/lan-transfer)
+**当前版本：v1.4.0（2026-11-06）** ｜ [更新记录](CHANGELOG.md) ｜ [HTTP 接口文档](docs/api.md) ｜ [GitHub 仓库](https://github.com/gman228915-png/lan-transfer)
 
 ## 功能一览
 
 | 模块 | 能做什么 | 能力边界 |
 |---|---|---|
-| 桌面 GUI（Windows） | 双击 exe 自动启动服务；展示 IP、端口、口令、链接和二维码；发布文件、查看手机上传的文件 | 只监听当前局域网 IP；每次启动重新生成 10 位随机口令；端口写死请求 8765，被占用会自动顺延 |
-| 网页端（内置） | 用浏览器访问电脑，上传（点击或拖拽、多选、进度、失败重试）、下载、删除，右上角可切换空间 | 免安装；首次访问需手动信任自签名 HTTPS 证书；不能浏览空间目录下的子目录 |
-| 安卓端（APK） | 扫码或手输地址+口令连接；列出所有空间的文件；多文件上传；下载到 App 专属目录；已下载文件可打开/分享/另存/删除 | 固定使用默认空间上传（inbox），暂不支持切换空间；需 Android 7.0 及以上 |
-| headless 服务 | 无界面常驻，适合放后台、当传输通道；PID 文件、按天结构化日志、优雅退出 | 没有 UI，需配合浏览器 / App / CLI 使用；与服务端是同一个程序，加 `--headless` 即可 |
-| 命令行客户端（CLI） | `health` / `spaces` / `ls` / `put` / `get` / `rm`；支持 `--json`、sha256 校验、语义化退出码 | `--resume` 仅预留参数，当前仍是完整下载 |
+| 桌面 GUI（Windows） | 双击 exe 自动启动服务；展示 IP、端口、口令、链接和二维码；发布文件、查看手机上传的文件；「在局域网内可见」开关控制 UDP 广播发现（默认开启） | 只监听当前局域网 IP；每次启动重新生成 10 位随机口令；端口写死请求 8765，被占用会自动顺延 |
+| 网页端（内置） | 用浏览器访问电脑，上传（点击或拖拽、多选、进度与速率、失败重试、并发 2 个上限）、下载、删除，右上角可切换空间 | 免安装；首次访问需手动信任自签名 HTTPS 证书；不能浏览空间目录下的子目录；下载断点保存在页面内存，刷新后需重新下载 |
+| 安卓端（APK） | 扫码或手输地址+口令连接；**空间下拉切换**；多文件上传（并发 2）；下载到 App 专属目录；下载中断可断点续传；已下载文件可打开/分享/另存/删除 | 需 Android 7.0 及以上；只读空间禁用上传 |
+| headless 服务 | 无界面常驻，适合放后台、当传输通道；PID 文件、按天结构化日志、优雅退出；`--no-discovery` 关闭广播 | 没有 UI，需配合浏览器 / App / CLI 使用；与服务端是同一个程序，加 `--headless` 即可 |
+| 命令行客户端（CLI） | `health` / `spaces` / `ls` / `put` / `get` / `rm` / `discover`；支持 `--json`、sha256 校验、语义化退出码 | 需 Python 环境运行源码，或使用打包好的 cli exe |
+| 断点续传 | 下载 `.part` + `Range` + `If-Range`，完成后校验整文件 sha256 再改名；上传走分片会话（8MB/片），中断后从服务端偏移继续 | 服务端需为 v1.4.0+；旧服务端自动回退一次性上传 |
+| 局域网发现 | 服务端每 3 秒 UDP 广播（端口 8766，不含口令）；CLI `discover` 列出同网段服务并给出可直接使用的 `--server` | 需要同一网段且防火墙放行 UDP 8766；跨网段需 `--any-subnet` |
 | 多空间隔离 | 通过 `spaces.yaml` 把不同目录分成独立空间，可设只读、独立口令 | 只发布/列出单层文件，不展示子目录；越界路径一律拒绝 |
 
 ## 交付文件
@@ -65,6 +67,8 @@
 
 1. **服务信息**：主机名、局域网 IP、端口、访问口令、是否启用 HTTPS、监听说明、发布目录、接收目录；若配置了多空间还会列出每个空间的名称、模式（rw/ro）和路径。
    按钮：`启动服务 / 停止服务`、`打开网页`、`复制链接`、`打开文件夹`（打开发布目录）。
+   另有一行「在局域网内可见（UDP 广播发现）」开关，默认开启，右侧显示「已广播 / 已关闭」；
+   关闭后会写入数据目录的 `settings.json`，下次启动保持该设置。
 2. **手机扫码连接**：显示二维码和完整访问链接；启动服务后才能看到。
 3. **发布文件（电脑 → 手机）**：列出 `shared-files` 里的文件；按钮 `添加文件`、`添加文件夹`、`删除所选`、`打开文件夹`。
    列表上方有一行说明：「文件用『添加文件』，整目录用『添加文件夹』，两者都支持任意格式」。
@@ -102,7 +106,10 @@
 ### 安卓端
 
 - 安装 APK 后打开，扫码或手输地址 + 口令；连接成功后会自动记住，下次打开自动重连。
-- 文件列表显示所有空间里的文件，点条目右侧即可下载；上传时会显示进度与百分比。
+- 连接成功后会自动拉取空间列表，信息条右侧的下拉可选「全部空间」或某个具体空间；
+  选中后列表、上传、下载都只针对该空间；只读空间会标注「（只读）」并禁用「上传文件」。
+- 文件列表显示名称、大小与所属空间；点条目右侧即可下载；上传时会显示进度、速率与百分比，多文件并发上限 2。
+- 下载中断后再次点下载会从断点续传（`.part` 临时文件 + `Range`），完成后自动改名为正式文件。
 - 下载的文件保存在 App 专属目录（`Android/data/com.lantransfer/files/Download/`），
   Windows 文件管理器或系统文件管理器可能看不到；在 App 内点「已下载」可打开、分享、移动/另存到公共目录或删除，不需要存储权限。
 - 电脑端证书重建后，App 会因证书指纹变化而拒绝连接，按提示点「清除并重连」即可。
@@ -129,11 +136,27 @@ release\lan-transfer-cli.exe get report.pdf -o .\downloads --space shared --serv
 
 # 6) 删除文件
 release\lan-transfer-cli.exe rm old.txt --space shared --server https://10.0.0.5:8765 --token-file token.txt --json
+
+# 7) 断点续传：大文件中途 Ctrl+C / 被杀掉后，重新执行并加 --resume
+release\lan-transfer-cli.exe put .\big.bin --space shared --server https://10.0.0.5:8765 --token-file token.txt --resume
+release\lan-transfer-cli.exe get big.bin -o .\downloads --space shared --server https://10.0.0.5:8765 --token-file token.txt --resume
+
+# 8) 局域网发现：监听 UDP 广播，输出可直接用于 --server 的地址
+release\lan-transfer-cli.exe discover --timeout 3
+release\lan-transfer-cli.exe discover --timeout 3 --json
 ```
 
-- 公共参数：`--server`、`--space`、`--token-file`、`--token`、`--json`、`--verify-sha256` / `--no-verify-sha256`、`--resume`（占位）。
+- 公共参数：`--server`、`--space`、`--token-file`、`--token`、`--json`、`--verify-sha256` / `--no-verify-sha256`、`--resume`。
+- `--resume` 行为：
+  - `put`：按服务端返回的会话偏移继续发分片（每片 8MB），状态记录在 `<源文件>.ltupload.json`；
+    服务端会话过期（30 分钟）会重建会话从头传，旧服务端则回退一次性 `POST /api/upload`。
+  - `get`：用 `<文件名>.part` 记录已下载字节与 `ETag`，带 `Range` / `If-Range` 请求续传；
+    完成后校验整文件 sha256 再改名为正式文件。服务端文件已变化时会丢弃 `.part` 从头下载。
+- `discover` 参数：`--timeout`（默认 3 秒）、`--discovery-port`（默认 8766）、`--any-subnet`（不做同网段过滤）；
+  默认只接受与本机同一 `/24` 网段的广播。
 - 环境变量：`LAN_TRANSFER_SERVER`、`LAN_TRANSFER_TOKEN_FILE`、`LAN_TRANSFER_TOKEN`。
-- `--json` 输出包含 `sha256`、`bytes`、`elapsed_ms` 等字段，便于程序解析。
+- `--json` 输出包含 `sha256`、`bytes`、`elapsed_ms` 等字段；续传时另有 `resumed`、`resumed_from`、`chunks`。
+- 进度输出到 stderr：`已传/总量 百分比 速率(MB/s) 剩余时间`，不影响 `--json` 的 stdout。
 - 退出码：`0` 成功、`1` 一般失败、`2` 参数错误、`3` 口令/权限错误、`4` 网络错误、`5` sha256 不一致、`6` 文件或空间不存在。
 - CLI 对自签名证书不做主机名校验（与局域网使用场景一致），内容完整性依赖 sha256 校验。
 
@@ -157,6 +180,7 @@ python desktop-client\lan_transfer.py --headless --port 8765 --token-file token.
 | `--spaces-file` | 空 | 空间配置，支持 `.yaml` / `.json`；默认用数据目录下的 `spaces.yaml` |
 | `--log-file` | 空 | 指定固定服务日志文件；不填则按天写到 `logs/service-YYYY-MM-DD.log` |
 | `--data-dir` | 空 | 数据目录：文件、证书、配置、PID、日志都放这里；默认是 exe / 脚本所在目录 |
+| `--no-discovery` | 关 | 关闭 UDP 广播发现（默认开启，端口 8766） |
 
 - **PID 文件**：`<数据目录>\lan-transfer.pid`，启动成功后写入，收到 SIGINT / SIGTERM / SIGBREAK 优雅退出时删除。
 - 日志为 JSON Lines（每行一条），上传审计单独写入 `logs/upload-audit-YYYY-MM-DD.log`。
@@ -194,7 +218,7 @@ spaces:
   网页端会标注「（只读）」；CLI 对只读空间执行 `put` / `rm` 会得到权限错误。
 - 不带 `space` 参数时：列出全部空间（需要全局口令），上传落到 `default_space`（默认 `inbox`）。
 - 服务端只允许访问配置里写明的目录，文件名一律清洗成单层，越界路径直接拒绝。
-- 电脑端窗口会显示空间名称、模式与路径；网页端可切换空间；安卓端固定用默认空间。
+- 电脑端窗口会显示空间名称、模式与路径；网页端、安卓端均可切换空间。
 - 支持 JSON 配置（`--spaces-file spaces.json`）。
 
 ## 数据与目录
@@ -206,10 +230,14 @@ spaces:
 | `D:\lan-transfer\received-files\` | 「接收文件」目录（默认空间 `inbox`）；手机/网页/CLI 上传默认落这里 |
 | `D:\lan-transfer\shared-files\` | 「发布文件」目录（默认空间 `shared`）；GUI 里「添加文件 / 添加文件夹」复制到这里 |
 | `D:\lan-transfer\logs\service-YYYY-MM-DD.log` | 服务日志（JSON Lines，按天切分），启动信息、端口顺延、错误等都在这 |
-| `D:\lan-transfer\logs\upload-audit-YYYY-MM-DD.log` | 上传审计：时间、空间、文件名、字节数、来源 IP、成功/失败、sha256 |
+| `D:\lan-transfer\logs\upload-audit-YYYY-MM-DD.log` | 上传审计：时间、空间、文件名、字节数、来源 IP、成功/失败、sha256，以及 `resumed`（是否断点续传）、`chunked`（是否分片上传）、`session`（会话 id） |
 | `D:\lan-transfer\lan-transfer.pid` | headless 模式的进程号（正常退出会删除） |
+| `D:\lan-transfer\settings.json` | 桌面端设置（目前保存「在局域网内可见」开关）；headless 同样会读取 |
 | `D:\lan-transfer\spaces.yaml` | 空间配置（首次自动生成） |
 | `D:\lan-transfer\.lan_transfer_cert.pem` / `.lan_transfer_key.pem` | 自签名 HTTPS 证书与私钥（首次启动自动生成） |
+
+> 分片上传进行中的临时文件为空间目录下的 `.lt-upload-<id>.part`，不会出现在文件列表；
+> 会话 30 分钟没有新分片会被自动清理，服务启动时也会清理遗留的过期临时文件。
 
 > **没有 `error.log`**。错误信息写入 `logs/service-YYYY-MM-DD.log`（`level` 为 `error` 的记录），
 > 桌面端同时会弹窗提示；排查问题请看服务日志。
@@ -281,9 +309,18 @@ spaces:
 
 **8. 传大文件中断了怎么办**
 
-- 网页端在失败的条目上点「重试」，安卓端在失败提示里重试，不需要重新选文件。
+- CLI：文件没传完时保留断点，重新执行同一条命令并加 `--resume` 即可从断点继续（上传按 8MB 分片、下载按 `.part` 字节数）。
+- 网页端：下载失败会自动重试 3 次；仍失败时已收到的部分保留在页面内存，再点一次「下载」即从断点继续（刷新页面后需重新下载）。
+- 安卓端：下载中断会保留 `.part`，再次点该文件的下载按钮即从断点续传。
 - 大文件建议靠近路由器，避免 Wi-Fi 信号弱导致中断。
-- CLI 的 `--resume` 目前只是占位参数，仍会完整下载。
+- 服务端文件在中断期间被修改（mtime / 大小变化）时，续传会自动放弃断点、从头下载并使用新的 sha256 校验。
+
+**9. `discover` 找不到局域网内的服务**
+
+- 确认电脑端「在局域网内可见」开关是「已广播」（或 headless 未加 `--no-discovery`）。
+- 确认防火墙允许 UDP 8766（Windows 首次运行只放行 TCP 时可能漏掉 UDP）。
+- 手机/电脑在同一网段；跨网段或虚拟网卡较多时可加 `--any-subnet` 看是否能看到。
+- 也可以在 `discover` 前先用 `health --server https://IP:8765` 验证网络连通。
 
 ## 项目结构
 
