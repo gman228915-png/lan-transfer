@@ -1,7 +1,9 @@
 (function () {
   "use strict";
 
-  var state = { files: [], uploading: false, info: null, space: "" };
+  var state = { files: [], uploading: false, info: null, space: "", downloads: {} };
+  var UPLOAD_CONCURRENCY = 2;
+  var DOWNLOAD_RETRIES = 3;
 
   var el = {
     deviceInfo: document.getElementById("deviceInfo"),
@@ -220,8 +222,9 @@
 
     var meta = document.createElement("div");
     meta.className = "file-meta";
-    meta.textContent = formatSize(f.size) + " · " + formatTime(f.mtime) +
+    meta.dataset.base = formatSize(f.size) + " · " + formatTime(f.mtime) +
       (f.space && !state.space ? " · " + f.space : "");
+    meta.textContent = meta.dataset.base;
 
     main.appendChild(nameLink);
     main.appendChild(meta);
@@ -232,9 +235,15 @@
     var dl = document.createElement("a");
     dl.className = "dl";
     dl.href = "/download?name=" + encoded + sq;
-    dl.title = "下载";
+    dl.title = "下载（支持断点续传）";
     dl.setAttribute("aria-label", "下载 " + f.name);
     dl.innerHTML = ICON_DOWNLOAD;
+    dl.addEventListener("click", function (e) {
+      // 用 fetch + Range 自己接管下载，失败后可从断点继续
+      if (!window.fetch || !window.ReadableStream) return;
+      e.preventDefault();
+      downloadFile(f, meta, dl);
+    });
 
     var del = document.createElement("button");
     del.className = "del";
@@ -263,6 +272,124 @@
     row.appendChild(main);
     row.appendChild(actions);
     return row;
+  }
+
+  // --------------------------- 下载（断点续传） --------------------------- //
+  function downloadStateKey(f) {
+    return (f.space || state.space || "") + "|" + f.name;
+  }
+
+  function updateDownloadMeta(meta, dl, note) {
+    var base = meta.dataset.base || "";
+    var pct = dl.total ? Math.min(100, Math.round(dl.received * 100 / dl.total)) : 0;
+    var speedText = dl.speed ? formatSize(dl.speed) + "/s" : "";
+    var etaText = (dl.total && dl.speed > 0 && dl.received < dl.total)
+      ? " · 剩余 " + Math.ceil((dl.total - dl.received) / dl.speed) + "s" : "";
+    meta.textContent = base + " · " +
+      (note || ("下载 " + pct + "% " + speedText + etaText));
+  }
+
+  function downloadFile(f, meta, trigger) {
+    var key = downloadStateKey(f);
+    var dl = state.downloads[key];
+    if (!dl) {
+      dl = state.downloads[key] = {
+        chunks: [], received: 0, total: f.size || 0, etag: "", running: false, speed: 0
+      };
+    }
+    if (dl.running) {
+      toast("正在下载《" + f.name + "》");
+      return;
+    }
+    dl.running = true;
+    var encoded = encodeURIComponent(f.name);
+    var sq = "&space=" + encodeURIComponent(f.space || state.space || "");
+    var attempt = 0;
+
+    function step() {
+      var headers = {};
+      if (dl.received > 0) {
+        headers.Range = "bytes=" + dl.received + "-";
+        if (dl.etag) headers["If-Range"] = dl.etag;
+        updateDownloadMeta(meta, dl, "从 " + formatSize(dl.received) + " 续传…");
+      }
+      fetch("/download?checksum=0&name=" + encoded + sq,
+            { headers: headers, cache: "no-store" })
+        .then(function (res) {
+          if (!res.ok) {
+            throw new Error("HTTP " + res.status +
+              (res.status === 401 || res.status === 403 ? "（口令无效）" : ""));
+          }
+          if (dl.received > 0 && res.status === 200) {
+            // 服务器没接受 Range（文件已变化），从头接收
+            dl.chunks = [];
+            dl.received = 0;
+          }
+          var etag = res.headers.get("ETag");
+          if (etag) dl.etag = etag;
+          var cr = res.headers.get("Content-Range");
+          if (cr) {
+            var total = parseInt(cr.split("/")[1], 10);
+            if (total) dl.total = total;
+          } else {
+            var len = parseInt(res.headers.get("Content-Length") || "0", 10);
+            if (len) dl.total = dl.received + len;
+          }
+          var reader = res.body.getReader();
+          var started = performance.now();
+          var startBytes = dl.received;
+          var lastPaint = 0;
+          function pump() {
+            return reader.read().then(function (r) {
+              if (r.done) return;
+              dl.chunks.push(r.value);
+              dl.received += r.value.length;
+              var elapsed = (performance.now() - started) / 1000;
+              if (elapsed > 0.2) {
+                dl.speed = (dl.received - startBytes) / elapsed;
+                var now = performance.now();
+                if (now - lastPaint > 400) {
+                  lastPaint = now;
+                  updateDownloadMeta(meta, dl);
+                }
+              }
+              return pump();
+            });
+          }
+          return pump();
+        })
+        .then(function () {
+          if (dl.total && dl.received < dl.total) throw new Error("连接提前结束");
+          var blob = new Blob(dl.chunks);
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement("a");
+          a.href = url;
+          a.download = f.name;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+          delete state.downloads[key];
+          if (trigger) trigger.classList.remove("busy");
+          meta.textContent = (meta.dataset.base || "") + " · 下载完成";
+          toast("下载完成：" + f.name);
+        })
+        .catch(function (err) {
+          attempt++;
+          if (attempt < DOWNLOAD_RETRIES && dl.received > 0) {
+            updateDownloadMeta(meta, dl, "连接中断，第 " + attempt + " 次重试…");
+            setTimeout(step, 600 + attempt * 800);
+            return;
+          }
+          dl.running = false;
+          if (trigger) trigger.classList.remove("busy");
+          var reason = (err && err.message) || "网络错误";
+          updateDownloadMeta(meta, dl, "下载中断，已保留 " +
+            formatSize(dl.received) + "，点下载继续");
+          toast("下载中断：" + reason + "，点下载按钮可从断点继续", true);
+        });
+    }
+    step();
   }
 
   // --------------------------- 上传 --------------------------- //
@@ -335,12 +462,34 @@
       xhr.open("POST", "/api/upload?name=" + encodeURIComponent(file.name) + spaceQuery());
       xhr.setRequestHeader("Content-Type", "application/octet-stream");
 
+      var started = 0;
+      var lastTime = 0;
+      var lastLoaded = 0;
       xhr.upload.onprogress = function (e) {
         if (!e.lengthComputable) return;
+        var now = performance.now();
+        if (!started) {
+          started = now;
+          lastTime = now;
+          lastLoaded = e.loaded;
+        }
         var percent = Math.min(100, Math.round((e.loaded / e.total) * 100));
         pct.textContent = percent + "%";
         fill.style.width = percent + "%";
-        meta.textContent = formatSize(e.loaded) + " / " + formatSize(e.total) + " · 上传中";
+        var speedText = "";
+        var etaText = "";
+        if (now - lastTime >= 500) {
+          var speed = Math.max(0, (e.loaded - lastLoaded) /
+            ((now - lastTime) / 1000));
+          lastTime = now;
+          lastLoaded = e.loaded;
+          speedText = " · " + formatSize(speed) + "/s";
+          if (speed > 0 && e.loaded < e.total) {
+            etaText = " · 剩余 " + Math.ceil((e.total - e.loaded) / speed) + "s";
+          }
+        }
+        meta.textContent = formatSize(e.loaded) + " / " + formatSize(e.total) +
+          " · 上传中" + speedText + etaText;
       };
 
       xhr.onload = function () {
@@ -383,15 +532,25 @@
     el.uploadPanel.hidden = false;
     el.uploadList.innerHTML = "";
 
-    var queue = Promise.resolve();
+    // 并发上限固定为 2，避免一次选几十个文件把手机和服务端拖死
     var success = 0;
-    files.forEach(function (file) {
-      queue = queue.then(function () {
-        return uploadOne(file).then(function (ok) {
-          if (ok) success++;
-        });
-      });
-    });
+    var next = 0;
+    function worker() {
+      if (next >= files.length) return Promise.resolve();
+      var file = files[next++];
+      return uploadOne(file).then(function (ok) {
+        if (ok) success++;
+      }).then(worker);
+    }
+    var workers = [];
+    for (var i = 0; i < Math.min(UPLOAD_CONCURRENCY, files.length); i++) {
+      workers.push(worker());
+    }
+    var queue = Promise.all(workers);
+    if (files.length > UPLOAD_CONCURRENCY) {
+      toast("已加入 " + files.length + " 个文件，最多同时上传 " +
+        UPLOAD_CONCURRENCY + " 个");
+    }
 
     queue.then(function () {
       state.uploading = false;
