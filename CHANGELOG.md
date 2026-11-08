@@ -1,5 +1,76 @@
 # 更新记录
 
+## v1.7.0（2026-11-08）
+
+这一版加三项界面能力：**卡片折叠**、**卡片不透明度**、**7 语言切换**。
+传输逻辑、HTTP / MCP 接口、上传下载协议均未改动；`settings.json` 只新增 `ui` 字段。
+
+### 新增
+
+- **卡片折叠（电脑端）**：四张卡片（服务信息 / 扫码连接 / 发布文件 / 接收文件）标题栏右侧
+  各有一个折叠按钮，`⌃` 表示已展开（点击收起）、`⌄` 表示已收起（点击展开）；
+  窗口右上角另有「全部收起 / 全部展开」。
+  收起后只隐藏卡片内容、保留一行标题条，窗口高度按 `_needed_height()` 反算并自动收缩
+  （下限 220px，不超过屏幕高度 −80）；折叠状态写入 `settings.json` 的 `ui.collapsed`，重启保持。
+- **卡片折叠（网页端）**：卡片标题右侧同样的 `⌃ / ⌄` 按钮，用 `hidden` 切换内容区；
+  状态存 `localStorage`（key `lan-transfer-collapse`，对象 `{hero, files, connect}`），刷新后保持。
+- **卡片不透明度（电脑端）**：卡片填充色不再是写死常量，改为
+  从当前背景图在卡片矩形内采样求区域平均色 → 与卡片本色按不透明度权重混合 → `darken_clamp` 限幅；
+  描边、按钮底色、标题条底色用同一套混色结果弱化，避免硬边。
+  背景图、显示方式、遮罩浓度、窗口尺寸变化时自动重算。
+  「外观 · 背景」面板新增 **卡片不透明度滑块 60%–100%**（默认 88%），与遮罩浓度独立，
+  写入 `settings.json` 的 `ui.card_opacity`。
+- **卡片不透明度（网页端）**：卡片改为 `rgba(…, var(--panel-a))` + `backdrop-filter: blur()`；
+  滑块直接写 CSS 变量 `--panel-a` / `--panel-2-a`（默认 88%），与桌面端共用同一参数，
+  存 `localStorage`。60% 时能明显看到背景色透过卡片。
+- **多语言（三端）**：简体中文 `zh-Hans`、繁體中文 `zh-Hant`、`en`、`ja`、`ko`、`es`、`ru`，
+  七种语言均为完整文案：
+  - 电脑端新增 `desktop-client/tr.py` + `desktop-client/i18n/*.json`（7 × 104 条）；
+    代码中不再有硬编码中文字符串；缺键回退英文；默认按 Windows LANGID 跟随系统语言。
+  - 网页端新增 `desktop-client/static/i18n.js` + `static/i18n/*.json`（7 × 90 条）；
+    `data-i18n` / `data-i18n-attr` 驱动，切换立即生效，同步更新 `<html lang>` 与 `document.title`；
+    默认按 `navigator.languages` 跟随系统；选择存 `localStorage`（key `lan-transfer-lang`）。
+  - 安卓端 `res/values/strings.xml` 改为英文默认（作为回退基线），新增
+    `values-zh` / `values-zh-rTW` / `values-ja` / `values-ko` / `values-es` / `values-ru`（各 105 条）；
+    「外观 → 语言」可「跟随系统」或手动覆盖，
+    通过 `AppCompatDelegate.setApplicationLocales` + `AppLocalesMetadataHolderService`
+    （`autoStoreLocales=true`）立即生效并跨重启保存，`locale_config.xml` 声明支持语言列表。
+- 服务端静态白名单加入 `i18n.js` 与 7 个语言 JSON，`application/json; charset=utf-8` 正确返回。
+
+### 改进
+
+- 电脑端切换语言时弹出确认框，确认后自动重启自身（先停服务再 `subprocess.Popen` 新进程）；
+  Tkinter 控件创建时绑定文案，无法只换字符串不重建，这是技术限制而非未做。
+- 长文案适配：桌面端按钮 / 表格列设最小宽度，窗口宽度小于 1020px 时隐藏卡片副标题，
+  设备发现状态改为两行；安卓按钮 `minWidth=0dp` + `maxLines=1` + 水平内边距；
+  网页端按钮自适应换行与省略。
+- 网页端 `qr_tip` 支持换行（`.qr-side p` 加 `white-space: pre-line`）。
+- 版本号升到 1.7.0（服务端 / CLI / MCP / GUI / APK，Android `versionCode` 5 → 6）。
+
+### 验证
+
+- 文案完整性：桌面端 7 × 104、网页端 7 × 90、安卓端 7 × 105，键集逐一比对 **0 缺失 / 0 多余**，
+  安卓 `%1$s` / `%1$d` 占位符三端一致。
+- 电脑端截图（`.screenshots/`）：折叠前 / 全部折叠 / 单卡折叠、不透明度 60% 与 100%、
+  7 种语言界面、1366×768（1120×688）共 13 组。
+  锁屏环境下改用 Win32 `PrintWindow` + `GetDIBits` 抓取客户区，避开 `ImageGrab` 受限。
+- 网页端截图：zh / en / ja 三种语言、折叠后、不透明度 60%，用 Chrome headless 实拍；
+  确认 `<html lang>` 与标题随语言变化、折叠后无大片留白。
+- 溢出检查：四张卡片、按钮、表格表头、提示文字在 en / ru / es / ja / ko 下均无溢出或裁切。
+- 安卓：Gradle 构建 + apksigner 签名通过（`versionCode=6`、`versionName=1.7.0`）。
+
+### 已知限制
+
+- **电脑端不是真半透明**：Tkinter 子控件没有 alpha 通道，卡片是「采样平均色 + 卡片色混合 + 限幅」
+  的静态填充，观感上接近半透明，但不会像 CSS `backdrop-filter` 那样实时模糊背景；
+  卡片内的文字、按钮等控件仍是不透明绘制。
+- 采样取区域平均色，背景在该区域的明暗细节不会逐像素还原；背景对比强烈时卡片会明显偏色，
+  这是刻意的「透出」效果，可把不透明度调回 100% 还原本色。
+- 电脑端切换语言需要重启窗口（已给确认提示与自动重启）。
+- 网页端文件列表时间在 headless Chrome 下仍按 `en-US` 显示（与界面语言无关），
+  真实浏览器通常跟随系统语言，本轮未单独修复。
+- 安卓端仅有构建与签名验证，无真机 / 模拟器运行时验证。
+
 ## v1.6.0（2026-11-08）
 
 这一版**只做界面与品牌视觉**：不改传输逻辑、不改 HTTP / MCP 接口、不动上传下载协议。
