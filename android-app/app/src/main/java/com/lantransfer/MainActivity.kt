@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
@@ -35,6 +36,24 @@ class MainActivity : AppCompatActivity() {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var adapter: FileAdapter
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** 外观：自定义背景（只存本机 Uri，不参与传输逻辑） */
+    private val appearancePrefs by lazy { getSharedPreferences("appearance", MODE_PRIVATE) }
+    private val pickBackground = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (_: SecurityException) {
+                // 某些文件管理器不支持持久授权，本次仍可用
+            }
+            appearancePrefs.edit().putString("bg_uri", uri.toString()).apply()
+            applyBackground()
+            Toast.makeText(this, "背景已更新", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     /** 正在连接 / 上传 / 下载，防止重复操作 */
     private var opRunning = false
@@ -123,6 +142,8 @@ class MainActivity : AppCompatActivity() {
         binding.btnScan.setOnClickListener { scan() }
         binding.btnDiscover.setOnClickListener { startDiscovery(false) }
         binding.btnOpenDownloads.setOnClickListener { showDownloadOptions() }
+        binding.btnAppearance.setOnClickListener { showAppearanceDialog() }
+        applyBackground()
 
         // 记住上次地址与口令；有记录时自动重连
         val sp = getSharedPreferences("lantransfer", MODE_PRIVATE)
@@ -139,6 +160,65 @@ class MainActivity : AppCompatActivity() {
 
         // 没有历史地址时，连上 Wi-Fi 后自动扫描局域网设备
         if (savedUrl.isEmpty()) startDiscovery(true)
+    }
+
+    // --------------------------------------------------------------------------- #
+    // 外观：自定义背景（只影响界面，不影响传输）
+    // --------------------------------------------------------------------------- #
+    private fun showAppearanceDialog() {
+        val items = arrayOf("选择背景图片", "恢复默认背景")
+        AlertDialog.Builder(this)
+            .setTitle("外观 · 背景")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> pickBackground.launch(arrayOf("image/*"))
+                    1 -> {
+                        appearancePrefs.edit().remove("bg_uri").apply()
+                        applyBackground()
+                        Toast.makeText(this, "已恢复默认背景", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun applyBackground() {
+        val uriString = appearancePrefs.getString("bg_uri", null)
+        if (uriString.isNullOrEmpty()) {
+            binding.imgBackground.setImageDrawable(null)
+            binding.bgDim.alpha = 0f
+            return
+        }
+        binding.bgDim.alpha = 0.45f
+        val uri = Uri.parse(uriString)
+        Thread {
+            try {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                contentResolver.openInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it, null, bounds)
+                }
+                var sample = 1
+                while (bounds.outWidth > 0 && bounds.outWidth / (sample * 2) >= 900) {
+                    sample *= 2
+                }
+                val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+                val bitmap = contentResolver.openInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it, null, opts)
+                }
+                mainHandler.post {
+                    if (!isFinishing && !isDestroyed) binding.imgBackground.setImageBitmap(bitmap)
+                }
+            } catch (_: Exception) {
+                mainHandler.post {
+                    if (!isFinishing && !isDestroyed) {
+                        binding.imgBackground.setImageDrawable(null)
+                        binding.bgDim.alpha = 0f
+                        Toast.makeText(this, "背景图片已失效，请重新选择",
+                            Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }.start()
     }
 
     // --------------------------------------------------------------------------- #
