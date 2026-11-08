@@ -5,6 +5,10 @@
   var UPLOAD_CONCURRENCY = 2;
   var DOWNLOAD_RETRIES = 3;
 
+  function t(key, vars) {
+    return window.LT ? window.LT.t(key, vars) : key;
+  }
+
   var el = {
     deviceInfo: document.getElementById("deviceInfo"),
     storageInfo: document.getElementById("storageInfo"),
@@ -24,6 +28,12 @@
     qr: document.getElementById("qr"),
     toggleQr: document.getElementById("toggleQr"),
     copyBtn: document.getElementById("copyBtn"),
+    heroToggle: document.getElementById("heroToggle"),
+    heroBody: document.getElementById("heroBody"),
+    filesToggle: document.getElementById("filesToggle"),
+    filesBody: document.getElementById("filesBody"),
+    connectToggle: document.getElementById("connectToggle"),
+    connectBody: document.getElementById("connectBody"),
     bgLayer: document.getElementById("bgLayer"),
     bgBtn: document.getElementById("bgBtn"),
     bgSheet: document.getElementById("bgSheet"),
@@ -33,6 +43,8 @@
     bgMode: document.getElementById("bgMode"),
     bgDim: document.getElementById("bgDim"),
     bgDimVal: document.getElementById("bgDimVal"),
+    bgOpacity: document.getElementById("bgOpacity"),
+    bgOpacityVal: document.getElementById("bgOpacityVal"),
     bgFileName: document.getElementById("bgFileName"),
     bgClose: document.getElementById("bgClose"),
     toast: document.getElementById("toast")
@@ -64,13 +76,16 @@
     return (i === 0 ? Math.round(n) : n.toFixed(1)) + " " + units[i];
   }
 
+  function localeTag() {
+    return window.LT ? window.LT.htmlLang() : undefined;
+  }
+
   function formatTime(ts) {
     var d = new Date(ts * 1000);
-    var now = new Date();
-    var pad = function (v) { return v < 10 ? "0" + v : "" + v; };
-    var hm = pad(d.getHours()) + ":" + pad(d.getMinutes());
-    if (d.toDateString() === now.toDateString()) return "今天 " + hm;
-    return (d.getMonth() + 1) + "月" + d.getDate() + "日 " + hm;
+    var tag = localeTag();
+    var time = d.toLocaleTimeString(tag, { hour: "2-digit", minute: "2-digit" });
+    if (d.toDateString() === new Date().toDateString()) return time;
+    return d.toLocaleDateString(tag, { month: "short", day: "numeric" }) + " " + time;
   }
 
   function toast(message, isError) {
@@ -80,6 +95,57 @@
     toast.timer = setTimeout(function () {
       el.toast.className = "toast";
     }, isError ? 3000 : 1900);
+  }
+
+  // --------------------------- 折叠 --------------------------- //
+  var COLLAPSE_KEY = "lan-transfer-collapse";
+  var collapseState = { hero: false, files: false, connect: false };
+
+  function readCollapse() {
+    try {
+      var raw = localStorage.getItem(COLLAPSE_KEY);
+      if (!raw) return;
+      var parsed = JSON.parse(raw) || {};
+      Object.keys(collapseState).forEach(function (key) {
+        collapseState[key] = !!parsed[key];
+      });
+    } catch (err) { /* 忽略损坏的本地设置 */ }
+  }
+
+  function saveCollapse() {
+    try {
+      localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapseState));
+    } catch (err) { /* 忽略 */ }
+  }
+
+  function collapseParts(key) {
+    if (key === "hero") return [el.heroToggle, el.heroBody];
+    if (key === "files") return [el.filesToggle, el.filesBody];
+    return [el.connectToggle, el.connectBody];
+  }
+
+  function paintCollapseButton(key) {
+    var btn = collapseParts(key)[0];
+    if (!btn) return;
+    var collapsed = collapseState[key];
+    btn.innerHTML = collapsed ? "\u2304" : "\u2303";
+    btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    btn.title = t(collapsed ? "expand" : "collapse");
+    btn.setAttribute("aria-label", btn.title);
+  }
+
+  function applyCollapse(key, persist) {
+    var parts = collapseParts(key);
+    var body = parts[1];
+    if (!body) return;
+    body.hidden = collapseState[key];
+    paintCollapseButton(key);
+    if (persist) saveCollapse();
+  }
+
+  function toggleCollapse(key) {
+    collapseState[key] = !collapseState[key];
+    applyCollapse(key, true);
   }
 
   // --------------------------- 数据 --------------------------- //
@@ -98,12 +164,12 @@
         el.spaceSelect.innerHTML = "";
         var all = document.createElement("option");
         all.value = "";
-        all.textContent = "全部空间";
+        all.textContent = t("space_all");
         el.spaceSelect.appendChild(all);
         spaces.forEach(function (space) {
           var option = document.createElement("option");
           option.value = space.name;
-          option.textContent = space.name + (space.mode === "ro" ? "（只读）" : "");
+          option.textContent = space.name + (space.mode === "ro" ? t("space_ro") : "");
           el.spaceSelect.appendChild(option);
         });
         if (state.space && !spaces.some(function (s) { return s.name === state.space; })) {
@@ -113,9 +179,22 @@
         el.spaceSelect.disabled = spaces.length <= 1;
       })
       .catch(function () {
-        el.spaceSelect.innerHTML = '<option value="">全部空间</option>';
+        el.spaceSelect.innerHTML = "";
+        var fallback = document.createElement("option");
+        fallback.value = "";
+        fallback.textContent = t("space_all");
+        el.spaceSelect.appendChild(fallback);
         el.spaceSelect.disabled = true;
       });
+  }
+
+  function applyInfo(info) {
+    var portTip = info.port_changed
+      ? t("port_hint", { requested: info.port_requested, port: info.port })
+      : "";
+    el.deviceInfo.textContent = info.host + " · " + info.ip + ":" + info.port + portTip;
+    el.storageInfo.textContent = t("storage_prefix") + (info.storage || info.receive_dir || "—");
+    el.shareUrl.textContent = info.share_url;
   }
 
   function loadInfo() {
@@ -126,21 +205,17 @@
       })
       .then(function (info) {
         state.info = info;
-        var portTip = info.port_changed
-          ? " · 已从 " + info.port_requested + " 自动换到 " + info.port
-          : "";
-        el.deviceInfo.textContent = info.host + " · " + info.ip + ":" + info.port + portTip;
-        el.storageInfo.textContent = "接收目录：" + (info.storage || info.receive_dir || "—");
-        el.shareUrl.textContent = info.share_url;
+        applyInfo(info);
         if (info.share_url) {
           renderQr(info.share_url);
           el.connectCard.hidden = false;
+          applyCollapse("connect", false);
         }
       })
       .catch(function (err) {
         el.deviceInfo.textContent = err && err.message === "unauthorized"
-          ? "访问口令无效，请重新扫描电脑端二维码"
-          : "连接服务失败";
+          ? t("token_invalid")
+          : t("connect_failed");
       });
   }
 
@@ -149,9 +224,9 @@
       var qr = qrcode(0, "M");
       qr.addData(url);
       qr.make();
-      el.qr.innerHTML = qr.createSvgTag(4, 2, "手机扫码访问");
+      el.qr.innerHTML = qr.createSvgTag(4, 2, t("qr_alt"));
     } catch (err) {
-      el.qr.textContent = "二维码生成失败，请手动输入地址";
+      el.qr.textContent = t("qr_fail");
     }
   }
 
@@ -159,7 +234,7 @@
     return fetch("/api/files" + (state.space ? "?space=" + encodeURIComponent(state.space) : ""),
                  { cache: "no-store" })
       .then(function (r) {
-        if (r.status === 403) throw new Error("口令已失效，请重新扫描电脑端二维码");
+        if (r.status === 403) throw new Error(t("token_expired"));
         return r.json();
       })
       .then(function (data) {
@@ -167,7 +242,7 @@
         renderFiles();
       })
       .catch(function (err) {
-        if (!silent) toast((err && err.message) || "获取文件列表失败", true);
+        if (!silent) toast((err && err.message) || t("files_fail"), true);
       });
   }
 
@@ -184,7 +259,7 @@
     if (!files.length) {
       el.emptyState.hidden = false;
       el.emptyState.querySelector("p").textContent =
-        keyword ? "没有匹配的文件" : "还没有文件";
+        keyword ? t("empty_no_match") : t("empty_none");
       return;
     }
     el.emptyState.hidden = true;
@@ -246,8 +321,8 @@
     var dl = document.createElement("a");
     dl.className = "dl";
     dl.href = "/download?name=" + encoded + sq;
-    dl.title = "下载（支持断点续传）";
-    dl.setAttribute("aria-label", "下载 " + f.name);
+    dl.title = t("download_title");
+    dl.setAttribute("aria-label", t("download_aria", { name: f.name }));
     dl.innerHTML = ICON_DOWNLOAD;
     dl.addEventListener("click", function (e) {
       // 用 fetch + Range 自己接管下载，失败后可从断点继续
@@ -259,11 +334,11 @@
     var del = document.createElement("button");
     del.className = "del";
     del.type = "button";
-    del.title = "删除";
-    del.setAttribute("aria-label", "删除 " + f.name);
+    del.title = t("delete_title");
+    del.setAttribute("aria-label", t("delete_aria", { name: f.name }));
     del.innerHTML = ICON_TRASH;
     del.addEventListener("click", function () {
-      if (!window.confirm("确定删除《" + f.name + "》吗？")) return;
+      if (!window.confirm(t("confirm_delete", { name: f.name }))) return;
       fetch("/api/files?name=" + encoded + sq, { method: "DELETE" })
         .then(function (r) { return r.json(); })
         .then(function (res) {
@@ -271,10 +346,10 @@
             toast(res.error, true);
             return;
           }
-          toast("已删除");
+          toast(t("deleted"));
           loadFiles(true);
         })
-        .catch(function () { toast("删除失败", true); });
+        .catch(function () { toast(t("delete_fail"), true); });
     });
 
     actions.appendChild(dl);
@@ -378,9 +453,9 @@
     var pct = dl.total ? Math.min(100, Math.round(dl.received * 100 / dl.total)) : 0;
     var speedText = dl.speed ? formatSize(dl.speed) + "/s" : "";
     var etaText = (dl.total && dl.speed > 0 && dl.received < dl.total)
-      ? " · 剩余 " + Math.ceil((dl.total - dl.received) / dl.speed) + "s" : "";
+      ? t("eta", { n: Math.ceil((dl.total - dl.received) / dl.speed) }) : "";
     meta.textContent = base + " · " +
-      (note || ("下载 " + pct + "% " + speedText + etaText));
+      (note || t("dl_meta", { pct: pct, speed: speedText, eta: etaText }));
   }
 
   function downloadFile(f, meta, trigger) {
@@ -388,7 +463,7 @@
     var pkey = downloadPersistKey(f);
     var dl = state.downloads[key];
     if (dl && dl.running) {
-      toast("正在下载《" + f.name + "》");
+      toast(t("download_busy", { name: f.name }));
       return;
     }
     if (dl) {
@@ -418,7 +493,7 @@
         fresh.etag = rec.etag || "";
         if (rec.total) fresh.total = rec.total;
         fresh.saved = fresh.received;
-        toast("从上次断点继续：" + formatSize(fresh.received));
+        toast(t("resume_from", { size: formatSize(fresh.received) }));
       }
       state.downloads[key] = fresh;
       runDownload(f, meta, trigger, fresh, pkey, key);
@@ -438,7 +513,7 @@
       if (dl.received > 0) {
         headers.Range = "bytes=" + dl.received + "-";
         if (dl.etag) headers["If-Range"] = dl.etag;
-        updateDownloadMeta(meta, dl, "从 " + formatSize(dl.received) + " 续传…");
+        updateDownloadMeta(meta, dl, t("resume_at", { size: formatSize(dl.received) }));
       }
       fetch("/download?checksum=0&name=" + encoded + sq,
             { headers: headers, cache: "no-store" })
@@ -454,8 +529,8 @@
           }
           if (!res.ok) {
             throw new Error("HTTP " + res.status +
-              (res.status === 401 || res.status === 403 ? "（口令无效）" : "") +
-              (res.status === 429 ? "（服务端繁忙，请稍后）" : ""));
+              (res.status === 401 || res.status === 403 ? t("http_token_bad") : "") +
+              (res.status === 429 ? t("http_busy") : ""));
           }
           if (dl.received > 0 && res.status === 200) {
             // 服务器未接受 Range（ETag 已变化），丢弃旧分片从头接收
@@ -506,7 +581,7 @@
           return pump();
         })
         .then(function () {
-          if (dl.total && dl.received < dl.total) throw new Error("连接提前结束");
+          if (dl.total && dl.received < dl.total) throw new Error(t("conn_ended"));
           var blob = new Blob(dl.chunks);
           var url = URL.createObjectURL(blob);
           var a = document.createElement("a");
@@ -519,8 +594,8 @@
           idb.del(pkey);
           delete state.downloads[key];
           if (trigger) trigger.classList.remove("busy");
-          meta.textContent = (meta.dataset.base || "") + " · 下载完成";
-          toast("下载完成：" + f.name);
+          meta.textContent = (meta.dataset.base || "") + " · " + t("download_done_meta");
+          toast(t("download_done", { name: f.name }));
         })
         .catch(function (err) {
           if (err && err.message === "__restart__") {
@@ -530,17 +605,16 @@
           attempt++;
           if (attempt < DOWNLOAD_RETRIES && dl.received > 0) {
             persistDownload(pkey, dl);
-            updateDownloadMeta(meta, dl, "连接中断，第 " + attempt + " 次重试…");
+            updateDownloadMeta(meta, dl, t("retry_n", { n: attempt }));
             setTimeout(step, 600 + attempt * 800);
             return;
           }
           dl.running = false;
           if (trigger) trigger.classList.remove("busy");
           if (dl.received) persistDownload(pkey, dl);
-          var reason = (err && err.message) || "网络错误";
-          updateDownloadMeta(meta, dl, "下载中断，已保留 " +
-            formatSize(dl.received) + "，刷新页面后点下载可继续");
-          toast("下载中断：" + reason + "，点下载按钮可从断点继续", true);
+          var reason = (err && err.message) || t("net_error");
+          updateDownloadMeta(meta, dl, t("download_interrupted", { size: formatSize(dl.received) }));
+          toast(t("download_interrupted_toast", { reason: reason }), true);
         });
     }
     step();
@@ -569,7 +643,7 @@
 
     var meta = document.createElement("div");
     meta.className = "up-meta";
-    meta.textContent = formatSize(file.size) + " · 等待中";
+    meta.textContent = formatSize(file.size) + " · " + t("wait");
 
     item.appendChild(head);
     item.appendChild(bar);
@@ -580,7 +654,7 @@
 
   function markFailed(item, message, file) {
     item.classList.add("failed");
-    item.querySelector(".up-pct").textContent = "失败";
+    item.querySelector(".up-pct").textContent = t("failed");
     item.querySelector(".up-meta").textContent = message;
 
     var head = item.querySelector(".up-head");
@@ -588,7 +662,7 @@
     var btn = document.createElement("button");
     btn.type = "button";
     btn.className = "retry";
-    btn.textContent = "重试";
+    btn.textContent = t("retry");
     btn.addEventListener("click", function () {
       uploadOne(file, item);
     });
@@ -608,7 +682,7 @@
     item.classList.remove("done", "failed");
     pct.textContent = "0%";
     fill.style.width = "0%";
-    meta.textContent = formatSize(file.size) + " · 等待中";
+    meta.textContent = formatSize(file.size) + " · " + t("wait");
     el.uploadPanel.hidden = false;
 
     return new Promise(function (resolve) {
@@ -639,11 +713,11 @@
           lastLoaded = e.loaded;
           speedText = " · " + formatSize(speed) + "/s";
           if (speed > 0 && e.loaded < e.total) {
-            etaText = " · 剩余 " + Math.ceil((e.total - e.loaded) / speed) + "s";
+            etaText = t("eta", { n: Math.ceil((e.total - e.loaded) / speed) });
           }
         }
         meta.textContent = formatSize(e.loaded) + " / " + formatSize(e.total) +
-          " · 上传中" + speedText + etaText;
+          " · " + t("uploading") + speedText + etaText;
       };
 
       xhr.onload = function () {
@@ -651,22 +725,22 @@
         try { data = JSON.parse(xhr.responseText); } catch (err) { /* ignore */ }
         if (xhr.status === 200 && data && data.ok) {
           item.classList.add("done");
-          pct.textContent = "完成";
+          pct.textContent = t("done");
           fill.style.width = "100%";
-          meta.textContent = formatSize(data.size) + " · 已保存";
+          meta.textContent = formatSize(data.size) + " · " + t("saved");
           if (data.name !== file.name) {
             name.textContent = file.name + " → " + data.name;
           }
           loadFiles(true);
           resolve(true);
         } else {
-          markFailed(item, (data && data.error) ? data.error : "上传失败，点重试", file);
+          markFailed(item, (data && data.error) ? data.error : t("upload_retry"), file);
           resolve(false);
         }
       };
 
       xhr.onerror = function () {
-        markFailed(item, "网络中断，请检查 Wi-Fi 后点重试", file);
+        markFailed(item, t("upload_network"), file);
         resolve(false);
       };
 
@@ -678,7 +752,7 @@
     var files = Array.prototype.slice.call(fileList || []);
     if (!files.length) return;
     if (state.uploading) {
-      toast("正在传输，请稍候再试", true);
+      toast(t("busy_upload"), true);
       return;
     }
 
@@ -702,8 +776,7 @@
     }
     var queue = Promise.all(workers);
     if (files.length > UPLOAD_CONCURRENCY) {
-      toast("已加入 " + files.length + " 个文件，最多同时上传 " +
-        UPLOAD_CONCURRENCY + " 个");
+      toast(t("queued", { count: files.length, n: UPLOAD_CONCURRENCY }));
     }
 
     queue.then(function () {
@@ -711,9 +784,9 @@
       el.fileInput.value = "";
       loadFiles(true);
       if (success === files.length) {
-        toast("已发送 " + success + " 个文件");
+        toast(t("sent", { count: success }));
       } else {
-        toast("成功 " + success + " / " + files.length + " 个文件", true);
+        toast(t("sent_partial", { ok: success, total: files.length }), true);
       }
       setTimeout(function () {
         if (!state.uploading && el.uploadList.querySelectorAll(".up-item").length) {
@@ -778,12 +851,16 @@
     el.toggleQr.addEventListener("click", function () {
       var hidden = el.qrWrap.hidden;
       el.qrWrap.hidden = !hidden;
-      el.toggleQr.textContent = hidden ? "收起" : "展开";
+      el.toggleQr.textContent = t(hidden ? "qr_toggle_collapse" : "qr_toggle_expand");
     });
+
+    if (el.heroToggle) el.heroToggle.addEventListener("click", function () { toggleCollapse("hero"); });
+    if (el.filesToggle) el.filesToggle.addEventListener("click", function () { toggleCollapse("files"); });
+    if (el.connectToggle) el.connectToggle.addEventListener("click", function () { toggleCollapse("connect"); });
 
     el.copyBtn.addEventListener("click", function () {
       var url = (state.info && state.info.share_url) || el.shareUrl.textContent;
-      var done = function () { toast("链接已复制"); };
+      var done = function () { toast(t("link_copied")); };
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(url).then(done).catch(function () { fallbackCopy(url, done); });
       } else {
@@ -803,18 +880,27 @@
     input.style.opacity = "0";
     document.body.appendChild(input);
     input.select();
-    try { document.execCommand("copy"); done(); } catch (err) { toast("复制失败，请手动输入", true); }
+    try { document.execCommand("copy"); done(); } catch (err) { toast(t("copy_failed"), true); }
     document.body.removeChild(input);
   }
 
-  // --------------------------- 外观：自定义背景 --------------------------- //
+  // --------------------------- 外观：自定义背景 + 卡片不透明度 --------------------------- //
   var BG_STORE_KEY = "background";
   var BG_SETTINGS_KEY = "lan-transfer-bg";
   var BG_MODES = ["fill", "fit", "tile", "center"];
-  var bgState = { url: "", name: "", mode: "fill", dim: 45 };
+  var OPACITY_MIN = 60;
+  var OPACITY_MAX = 100;
+  var OPACITY_DEFAULT = 88;
+  var bgState = { url: "", name: "", mode: "fill", dim: 45, opacity: OPACITY_DEFAULT };
+
+  function clampOpacity(value) {
+    var n = Number(value);
+    if (!isFinite(n)) return OPACITY_DEFAULT;
+    return Math.max(OPACITY_MIN, Math.min(OPACITY_MAX, Math.round(n)));
+  }
 
   function readBgSettings() {
-    var cfg = { mode: "fill", dim: 45, name: "" };
+    var cfg = { mode: "fill", dim: 45, name: "", opacity: OPACITY_DEFAULT };
     try {
       var raw = localStorage.getItem(BG_SETTINGS_KEY);
       if (raw) {
@@ -823,6 +909,7 @@
         var dim = Number(parsed.dim);
         if (isFinite(dim)) cfg.dim = Math.max(0, Math.min(100, Math.round(dim)));
         cfg.name = String(parsed.name || "");
+        if (parsed.opacity != null) cfg.opacity = clampOpacity(parsed.opacity);
       }
     } catch (err) { /* 忽略损坏的本地设置 */ }
     return cfg;
@@ -831,9 +918,19 @@
   function saveBgSettings() {
     try {
       localStorage.setItem(BG_SETTINGS_KEY, JSON.stringify({
-        mode: bgState.mode, dim: bgState.dim, name: bgState.name
+        mode: bgState.mode, dim: bgState.dim, name: bgState.name,
+        opacity: bgState.opacity
       }));
     } catch (err) { /* 隐私模式等会失败，忽略 */ }
+  }
+
+  // 卡片底色 alpha 与桌面端共用同一个「卡片不透明度」参数
+  function paintCards() {
+    var alpha = (bgState.opacity / 100).toFixed(3);
+    var alphaAlt = Math.min(1, bgState.opacity / 100 + 0.04).toFixed(3);
+    var root = document.documentElement;
+    root.style.setProperty("--panel-a", alpha);
+    root.style.setProperty("--panel-2-a", alphaAlt);
   }
 
   function paintBg() {
@@ -841,6 +938,7 @@
     root.style.setProperty("--bg-dim", (bgState.dim / 100 * 0.92).toFixed(3));
     root.style.setProperty("--bg-url", bgState.url ? 'url("' + bgState.url + '")' : "none");
     if (el.bgLayer) el.bgLayer.setAttribute("data-mode", bgState.mode);
+    paintCards();
   }
 
   function syncBgPanel() {
@@ -848,10 +946,12 @@
     el.bgMode.value = bgState.mode;
     el.bgDim.value = String(bgState.dim);
     if (el.bgDimVal) el.bgDimVal.textContent = bgState.dim + "%";
+    if (el.bgOpacity) el.bgOpacity.value = String(bgState.opacity);
+    if (el.bgOpacityVal) el.bgOpacityVal.textContent = bgState.opacity + "%";
     if (el.bgFileName) {
       el.bgFileName.textContent = bgState.name
-        ? "当前背景：" + bgState.name
-        : "当前：默认背景";
+        ? t("sheet_current_file", { name: bgState.name })
+        : t("sheet_current_default");
     }
   }
 
@@ -859,9 +959,9 @@
     if (!file) return;
     var okType = /^image\/(jpeg|png|webp|bmp)$/.test(file.type) ||
       /\.(jpg|jpeg|png|webp|bmp)$/i.test(file.name);
-    if (!okType) { toast("请选择 JPG / PNG / WebP / BMP 图片", true); return; }
+    if (!okType) { toast(t("bg_need_image"), true); return; }
     if (file.size > 8 * 1024 * 1024) {
-      toast("图片超过 8 MB，请先压缩再选择", true);
+      toast(t("bg_too_big"), true);
       return;
     }
     var reader = new FileReader();
@@ -875,11 +975,11 @@
         key: BG_STORE_KEY, name: file.name, dataUrl: bgState.url,
         updated: Date.now()
       }).then(function (rec) {
-        if (rec === null) toast("背景已应用，但浏览器未能保存", true);
-        else toast("背景已更新");
+        if (rec === null) toast(t("bg_saved_but"), true);
+        else toast(t("bg_updated"));
       });
     };
-    reader.onerror = function () { toast("读取图片失败", true); };
+    reader.onerror = function () { toast(t("bg_read_fail"), true); };
     reader.readAsDataURL(file);
   }
 
@@ -888,11 +988,12 @@
     bgState.name = "";
     bgState.mode = "fill";
     bgState.dim = 45;
+    bgState.opacity = OPACITY_DEFAULT;
     paintBg();
     syncBgPanel();
     saveBgSettings();
     idb.mediaDel(BG_STORE_KEY);
-    toast("已恢复默认背景");
+    toast(t("bg_reset_toast"));
   }
 
   function openBgSheet() {
@@ -910,6 +1011,7 @@
     bgState.mode = cfg.mode;
     bgState.dim = cfg.dim;
     bgState.name = cfg.name;
+    bgState.opacity = cfg.opacity;
     paintBg();
     syncBgPanel();
 
@@ -949,6 +1051,14 @@
       });
       el.bgDim.addEventListener("change", saveBgSettings);
     }
+    if (el.bgOpacity) {
+      el.bgOpacity.addEventListener("input", function () {
+        bgState.opacity = clampOpacity(el.bgOpacity.value);
+        if (el.bgOpacityVal) el.bgOpacityVal.textContent = bgState.opacity + "%";
+        paintCards();
+      });
+      el.bgOpacity.addEventListener("change", saveBgSettings);
+    }
 
     // 图片可能较大：延迟异步恢复，不影响文件列表首屏
     if (cfg.name) {
@@ -964,22 +1074,42 @@
     }
   }
 
+  // --------------------------- 启动 --------------------------- //
   function init() {
     idb.prune(3 * 24 * 60 * 60 * 1000); // 清理 3 天前的下载断点记录
+    readCollapse();
+    applyCollapse("hero", false);
+    applyCollapse("files", false);
+    applyCollapse("connect", false);
     bindEvents();
     initBg();
     var isDesktop = window.matchMedia("(min-width: 760px)").matches;
-    if (isDesktop) {
-      el.qrWrap.hidden = false;
-      el.toggleQr.textContent = "收起";
-    }
+    el.qrWrap.hidden = !isDesktop;
+    el.toggleQr.textContent = t(isDesktop ? "qr_toggle_collapse" : "qr_toggle_expand");
     loadSpaces();
     loadInfo();
     loadFiles(true);
     setInterval(function () {
       if (!document.hidden && !state.uploading) loadFiles(true);
     }, 8000);
+
+    if (window.LT) {
+      window.LT.onChange(function () {
+        renderFiles();
+        syncBgPanel();
+        if (state.info) applyInfo(state.info);
+        loadSpaces();
+        ["hero", "files", "connect"].forEach(paintCollapseButton);
+        if (el.qrWrap) {
+          el.toggleQr.textContent = t(el.qrWrap.hidden ? "qr_toggle_expand" : "qr_toggle_collapse");
+        }
+      });
+    }
   }
 
-  init();
+  if (window.LT) {
+    window.LT.init().then(init);
+  } else {
+    init();
+  }
 })();
