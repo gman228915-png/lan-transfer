@@ -24,6 +24,17 @@
     qr: document.getElementById("qr"),
     toggleQr: document.getElementById("toggleQr"),
     copyBtn: document.getElementById("copyBtn"),
+    bgLayer: document.getElementById("bgLayer"),
+    bgBtn: document.getElementById("bgBtn"),
+    bgSheet: document.getElementById("bgSheet"),
+    bgPick: document.getElementById("bgPick"),
+    bgReset: document.getElementById("bgReset"),
+    bgInput: document.getElementById("bgInput"),
+    bgMode: document.getElementById("bgMode"),
+    bgDim: document.getElementById("bgDim"),
+    bgDimVal: document.getElementById("bgDimVal"),
+    bgFileName: document.getElementById("bgFileName"),
+    bgClose: document.getElementById("bgClose"),
     toast: document.getElementById("toast")
   };
 
@@ -276,16 +287,19 @@
 
   // --------------------------- 下载（断点续传 + IndexedDB 持久化） --------------------------- //
   var idb = (function () {
-    var DB_NAME = "lan-transfer", STORE = "downloads", dbPromise = null;
+    var DB_NAME = "lan-transfer", STORE = "downloads", MEDIA = "media", dbPromise = null;
     function openDb() {
       if (dbPromise) return dbPromise;
       dbPromise = new Promise(function (resolve, reject) {
         if (!window.indexedDB) { reject(new Error("no indexedDB")); return; }
-        var req = indexedDB.open(DB_NAME, 1);
+        var req = indexedDB.open(DB_NAME, 2);
         req.onupgradeneeded = function () {
           var db = req.result;
           if (!db.objectStoreNames.contains(STORE)) {
             db.createObjectStore(STORE, { keyPath: "key" });
+          }
+          if (!db.objectStoreNames.contains(MEDIA)) {
+            db.createObjectStore(MEDIA, { keyPath: "key" });
           }
         };
         req.onsuccess = function () { resolve(req.result); };
@@ -293,11 +307,11 @@
       });
       return dbPromise;
     }
-    function run(mode, fn) {
+    function runIn(name, mode, fn) {
       return openDb().then(function (db) {
         return new Promise(function (resolve, reject) {
-          var tx = db.transaction(STORE, mode);
-          var store = tx.objectStore(STORE);
+          var tx = db.transaction(name, mode);
+          var store = tx.objectStore(name);
           var request = fn(store);
           tx.oncomplete = function () { resolve(request ? request.result : undefined); };
           tx.onerror = function () { reject(tx.error); };
@@ -305,10 +319,20 @@
         });
       }).catch(function () { return null; });
     }
+    function run(mode, fn) { return runIn(STORE, mode, fn); }
     return {
       get: function (key) { return run("readonly", function (s) { return s.get(key); }); },
       put: function (rec) { return run("readwrite", function (s) { return s.put(rec); }); },
       del: function (key) { return run("readwrite", function (s) { return s.delete(key); }); },
+      mediaGet: function (key) {
+        return runIn(MEDIA, "readonly", function (s) { return s.get(key); });
+      },
+      mediaPut: function (rec) {
+        return runIn(MEDIA, "readwrite", function (s) { return s.put(rec); });
+      },
+      mediaDel: function (key) {
+        return runIn(MEDIA, "readwrite", function (s) { return s.delete(key); });
+      },
       prune: function (maxAgeMs) {
         return run("readwrite", function (s) {
           var cutoff = Date.now() - maxAgeMs;
@@ -783,9 +807,167 @@
     document.body.removeChild(input);
   }
 
+  // --------------------------- 外观：自定义背景 --------------------------- //
+  var BG_STORE_KEY = "background";
+  var BG_SETTINGS_KEY = "lan-transfer-bg";
+  var BG_MODES = ["fill", "fit", "tile", "center"];
+  var bgState = { url: "", name: "", mode: "fill", dim: 45 };
+
+  function readBgSettings() {
+    var cfg = { mode: "fill", dim: 45, name: "" };
+    try {
+      var raw = localStorage.getItem(BG_SETTINGS_KEY);
+      if (raw) {
+        var parsed = JSON.parse(raw) || {};
+        if (BG_MODES.indexOf(parsed.mode) >= 0) cfg.mode = parsed.mode;
+        var dim = Number(parsed.dim);
+        if (isFinite(dim)) cfg.dim = Math.max(0, Math.min(100, Math.round(dim)));
+        cfg.name = String(parsed.name || "");
+      }
+    } catch (err) { /* 忽略损坏的本地设置 */ }
+    return cfg;
+  }
+
+  function saveBgSettings() {
+    try {
+      localStorage.setItem(BG_SETTINGS_KEY, JSON.stringify({
+        mode: bgState.mode, dim: bgState.dim, name: bgState.name
+      }));
+    } catch (err) { /* 隐私模式等会失败，忽略 */ }
+  }
+
+  function paintBg() {
+    var root = document.documentElement;
+    root.style.setProperty("--bg-dim", (bgState.dim / 100 * 0.92).toFixed(3));
+    root.style.setProperty("--bg-url", bgState.url ? 'url("' + bgState.url + '")' : "none");
+    if (el.bgLayer) el.bgLayer.setAttribute("data-mode", bgState.mode);
+  }
+
+  function syncBgPanel() {
+    if (!el.bgMode) return;
+    el.bgMode.value = bgState.mode;
+    el.bgDim.value = String(bgState.dim);
+    if (el.bgDimVal) el.bgDimVal.textContent = bgState.dim + "%";
+    if (el.bgFileName) {
+      el.bgFileName.textContent = bgState.name
+        ? "当前背景：" + bgState.name
+        : "当前：默认背景";
+    }
+  }
+
+  function applyBackgroundFile(file) {
+    if (!file) return;
+    var okType = /^image\/(jpeg|png|webp|bmp)$/.test(file.type) ||
+      /\.(jpg|jpeg|png|webp|bmp)$/i.test(file.name);
+    if (!okType) { toast("请选择 JPG / PNG / WebP / BMP 图片", true); return; }
+    if (file.size > 8 * 1024 * 1024) {
+      toast("图片超过 8 MB，请先压缩再选择", true);
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      bgState.url = String(reader.result || "");
+      bgState.name = file.name;
+      paintBg();
+      syncBgPanel();
+      saveBgSettings();
+      idb.mediaPut({
+        key: BG_STORE_KEY, name: file.name, dataUrl: bgState.url,
+        updated: Date.now()
+      }).then(function (rec) {
+        if (rec === null) toast("背景已应用，但浏览器未能保存", true);
+        else toast("背景已更新");
+      });
+    };
+    reader.onerror = function () { toast("读取图片失败", true); };
+    reader.readAsDataURL(file);
+  }
+
+  function resetBackground() {
+    bgState.url = "";
+    bgState.name = "";
+    bgState.mode = "fill";
+    bgState.dim = 45;
+    paintBg();
+    syncBgPanel();
+    saveBgSettings();
+    idb.mediaDel(BG_STORE_KEY);
+    toast("已恢复默认背景");
+  }
+
+  function openBgSheet() {
+    if (!el.bgSheet) return;
+    syncBgPanel();
+    el.bgSheet.hidden = false;
+  }
+
+  function closeBgSheet() {
+    if (el.bgSheet) el.bgSheet.hidden = true;
+  }
+
+  function initBg() {
+    var cfg = readBgSettings();
+    bgState.mode = cfg.mode;
+    bgState.dim = cfg.dim;
+    bgState.name = cfg.name;
+    paintBg();
+    syncBgPanel();
+
+    if (el.bgBtn) el.bgBtn.addEventListener("click", openBgSheet);
+    if (el.bgClose) el.bgClose.addEventListener("click", closeBgSheet);
+    if (el.bgSheet) {
+      el.bgSheet.addEventListener("click", function (e) {
+        if (e.target === el.bgSheet) closeBgSheet();
+      });
+    }
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && el.bgSheet && !el.bgSheet.hidden) closeBgSheet();
+    });
+    if (el.bgPick && el.bgInput) {
+      el.bgPick.addEventListener("click", function () {
+        el.bgInput.value = "";
+        el.bgInput.click();
+      });
+      el.bgInput.addEventListener("change", function () {
+        applyBackgroundFile(el.bgInput.files && el.bgInput.files[0]);
+      });
+    }
+    if (el.bgReset) el.bgReset.addEventListener("click", resetBackground);
+    if (el.bgMode) {
+      el.bgMode.addEventListener("change", function () {
+        bgState.mode = el.bgMode.value;
+        paintBg();
+        saveBgSettings();
+      });
+    }
+    if (el.bgDim) {
+      el.bgDim.addEventListener("input", function () {
+        var dim = Number(el.bgDim.value);
+        bgState.dim = isFinite(dim) ? Math.max(0, Math.min(100, dim)) : 0;
+        if (el.bgDimVal) el.bgDimVal.textContent = bgState.dim + "%";
+        paintBg();
+      });
+      el.bgDim.addEventListener("change", saveBgSettings);
+    }
+
+    // 图片可能较大：延迟异步恢复，不影响文件列表首屏
+    if (cfg.name) {
+      setTimeout(function () {
+        idb.mediaGet(BG_STORE_KEY).then(function (rec) {
+          if (!rec || !rec.dataUrl) return;
+          bgState.url = rec.dataUrl;
+          bgState.name = rec.name || cfg.name;
+          paintBg();
+          syncBgPanel();
+        });
+      }, 300);
+    }
+  }
+
   function init() {
     idb.prune(3 * 24 * 60 * 60 * 1000); // 清理 3 天前的下载断点记录
     bindEvents();
+    initBg();
     var isDesktop = window.matchMedia("(min-width: 760px)").matches;
     if (isDesktop) {
       el.qrWrap.hidden = false;
