@@ -24,6 +24,12 @@
       </div>
     </div>
     <div class="top-actions">
+      <div class="top-opacity" title="Card opacity">
+        <span class="top-opacity-label" data-i18n="opacity_label">Card opacity</span>
+        <input type="range" id="topOpacity" min="40" max="100" step="5" value="75"
+               aria-label="Card opacity" data-i18n-attr="aria-label:opacity_label">
+        <span id="topOpacityVal" class="top-opacity-val">75%</span>
+      </div>
       <button id="bgBtn" class="icon-btn" title="Background" aria-label="Background" data-i18n-attr="title:bg_btn,aria-label:bg_btn">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.8"/><path d="m20.5 15.5-4.2-4.2L4 21"/>
@@ -135,8 +141,8 @@
     <input type="range" id="bgDim" min="0" max="100" step="5" value="45">
     <p class="sheet-tip" data-i18n="dim_tip">Higher values darken the background and improve readability; 0% shows the original image.</p>
 
-    <label class="sheet-label" for="bgOpacity"><span data-i18n="opacity_label">Card opacity</span> <span id="bgOpacityVal">88%</span></label>
-    <input type="range" id="bgOpacity" min="60" max="100" step="4" value="88">
+    <label class="sheet-label" for="bgOpacity"><span data-i18n="opacity_label">Card opacity</span> <span id="bgOpacityVal">75%</span></label>
+    <input type="range" id="bgOpacity" min="40" max="100" step="5" value="75">
     <p class="sheet-tip" data-i18n="opacity_tip">Lower values let more of the background show through.</p>
 
     <label class="sheet-label" for="langSelect" data-i18n="lang_label">Language</label>

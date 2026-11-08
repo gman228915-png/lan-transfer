@@ -45,6 +45,8 @@
     bgDimVal: document.getElementById("bgDimVal"),
     bgOpacity: document.getElementById("bgOpacity"),
     bgOpacityVal: document.getElementById("bgOpacityVal"),
+    topOpacity: document.getElementById("topOpacity"),
+    topOpacityVal: document.getElementById("topOpacityVal"),
     bgFileName: document.getElementById("bgFileName"),
     bgClose: document.getElementById("bgClose"),
     toast: document.getElementById("toast")
@@ -888,9 +890,9 @@
   var BG_STORE_KEY = "background";
   var BG_SETTINGS_KEY = "lan-transfer-bg";
   var BG_MODES = ["fill", "fit", "tile", "center"];
-  var OPACITY_MIN = 60;
+  var OPACITY_MIN = 40;
   var OPACITY_MAX = 100;
-  var OPACITY_DEFAULT = 88;
+  var OPACITY_DEFAULT = 75;
   var bgState = { url: "", name: "", mode: "fill", dim: 45, opacity: OPACITY_DEFAULT };
 
   function clampOpacity(value) {
@@ -948,6 +950,8 @@
     if (el.bgDimVal) el.bgDimVal.textContent = bgState.dim + "%";
     if (el.bgOpacity) el.bgOpacity.value = String(bgState.opacity);
     if (el.bgOpacityVal) el.bgOpacityVal.textContent = bgState.opacity + "%";
+    if (el.topOpacity) el.topOpacity.value = String(bgState.opacity);
+    if (el.topOpacityVal) el.topOpacityVal.textContent = bgState.opacity + "%";
     if (el.bgFileName) {
       el.bgFileName.textContent = bgState.name
         ? t("sheet_current_file", { name: bgState.name })
@@ -1055,9 +1059,21 @@
       el.bgOpacity.addEventListener("input", function () {
         bgState.opacity = clampOpacity(el.bgOpacity.value);
         if (el.bgOpacityVal) el.bgOpacityVal.textContent = bgState.opacity + "%";
+        if (el.topOpacity) el.topOpacity.value = String(bgState.opacity);
+        if (el.topOpacityVal) el.topOpacityVal.textContent = bgState.opacity + "%";
         paintCards();
       });
       el.bgOpacity.addEventListener("change", saveBgSettings);
+    }
+    if (el.topOpacity) {
+      el.topOpacity.addEventListener("input", function () {
+        bgState.opacity = clampOpacity(el.topOpacity.value);
+        if (el.topOpacityVal) el.topOpacityVal.textContent = bgState.opacity + "%";
+        if (el.bgOpacity) el.bgOpacity.value = String(bgState.opacity);
+        if (el.bgOpacityVal) el.bgOpacityVal.textContent = bgState.opacity + "%";
+        paintCards();
+      });
+      el.topOpacity.addEventListener("change", saveBgSettings);
     }
 
     // 图片可能较大：延迟异步恢复，不影响文件列表首屏
