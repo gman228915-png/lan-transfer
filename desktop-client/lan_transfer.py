@@ -38,7 +38,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "lan-transfer"
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.7.1"
 API_VERSION = 1
 
 TOKEN_CHARS = "abcdefghjkmnpqrstuvwxyz23456789"
