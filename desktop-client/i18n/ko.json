@@ -102,5 +102,11 @@
   "lang_restart_title": "재시작 필요",
   "lang_restart_msg": "언어를 저장했습니다. 재시작 후 적용됩니다. 지금 재시작할까요?",
   "restart_now": "지금 재시작",
-  "restart_later": "나중에 수동으로 재시작"
+  "restart_later": "나중에 수동으로 재시작",
+  "sum_info_run": "실행 중 · 포트 {port}",
+  "sum_info_off": "서비스 중지됨",
+  "sum_qr_run": "{addr}",
+  "sum_qr_off": "서비스 중지됨",
+  "sum_pub": "게시됨: {count}개 파일",
+  "sum_recv": "받음: {count}개 파일"
 }

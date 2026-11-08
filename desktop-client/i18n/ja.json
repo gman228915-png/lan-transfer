@@ -102,5 +102,11 @@
   "lang_restart_title": "再起動が必要",
   "lang_restart_msg": "言語を保存しました。再起動後に適用されます。今すぐ再起動しますか？",
   "restart_now": "今すぐ再起動",
-  "restart_later": "後で手動で再起動"
+  "restart_later": "後で手動で再起動",
+  "sum_info_run": "実行中 · ポート {port}",
+  "sum_info_off": "サービス停止中",
+  "sum_qr_run": "{addr}",
+  "sum_qr_off": "サービス停止中",
+  "sum_pub": "公開中: {count} 個",
+  "sum_recv": "受信: {count} 個"
 }

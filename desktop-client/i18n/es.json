@@ -102,5 +102,11 @@
   "lang_restart_title": "Reinicio necesario",
   "lang_restart_msg": "Idioma guardado. Se aplicará tras reiniciar. ¿Reiniciar ahora?",
   "restart_now": "Reiniciar ahora",
-  "restart_later": "Reiniciaré manualmente"
+  "restart_later": "Reiniciaré manualmente",
+  "sum_info_run": "En ejecución · puerto {port}",
+  "sum_info_off": "Servicio detenido",
+  "sum_qr_run": "{addr}",
+  "sum_qr_off": "Servicio detenido",
+  "sum_pub": "Publicados: {count} archivos",
+  "sum_recv": "Recibidos: {count} archivos"
 }

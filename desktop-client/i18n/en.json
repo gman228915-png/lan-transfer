@@ -102,5 +102,11 @@
   "lang_restart_title": "Restart required",
   "lang_restart_msg": "Language saved. It takes effect after a restart. Restart now?",
   "restart_now": "Restart now",
-  "restart_later": "I'll restart later"
+  "restart_later": "I'll restart later",
+  "sum_info_run": "Running · port {port}",
+  "sum_info_off": "Service stopped",
+  "sum_qr_run": "{addr}",
+  "sum_qr_off": "Service stopped",
+  "sum_pub": "Published: {count} files",
+  "sum_recv": "Received: {count} files"
 }

@@ -102,5 +102,11 @@
   "lang_restart_title": "需要重启",
   "lang_restart_msg": "语言已保存。重启后新语言生效，现在重启吗？",
   "restart_now": "现在重启",
-  "restart_later": "稍后手动重启"
+  "restart_later": "稍后手动重启",
+  "sum_info_run": "运行中 · 端口 {port}",
+  "sum_info_off": "服务未启动",
+  "sum_qr_run": "{addr}",
+  "sum_qr_off": "服务未启动",
+  "sum_pub": "已发布 {count} 个文件",
+  "sum_recv": "收到 {count} 个文件"
 }

@@ -48,9 +48,13 @@ CARD_LINE_RGB = (42, 51, 84)
 
 BG_MODES = ("fill", "fit", "tile", "center")
 BG_DEFAULT_DIM = 45
-CARD_OPACITY_MIN = 60
+# 不透明度：100% 为实色卡片，40% 时背景采样色权重更大，效果肉眼可见
+CARD_OPACITY_MIN = 40
 CARD_OPACITY_MAX = 100
-CARD_OPACITY_DEFAULT = 88
+CARD_OPACITY_DEFAULT = 75
+CARD_OPACITY_LEGACY_DEFAULT = 88      # v1.7.0 的旧默认值，用于迁移
+GLASS_LIFT = 58                       # 模拟玻璃感的提亮量，让低不透明度明显可辨
+GLASS_FLOOR = 46
 
 CARD_KEYS = ("info", "qr", "pub", "recv")
 CARD_TITLE_KEYS = {
@@ -60,6 +64,7 @@ CARD_TITLE_KEYS = {
     "recv": "card_recv",
 }
 COLLAPSED_H = 42
+CARD_HEADER_H = 40
 
 
 def blend_rgb(a, b, ratio):
@@ -78,6 +83,14 @@ def darken_clamp(rgb, limit=92):
 
 def lighten(rgb, delta=16):
     return tuple(min(255, int(v) + delta) for v in rgb)
+
+
+def glass_target(rgb):
+    """把背景采样色抬到「玻璃后面」的亮度，低不透明度时差异才看得出来。
+
+    只做一次线性抬升，最终混色权重仍由滑块线性控制。
+    """
+    return tuple(min(255, max(GLASS_FLOOR, int(v)) + GLASS_LIFT) for v in rgb)
 
 
 def gen_qr_image(url, box_size=5, border=3):
@@ -103,7 +116,7 @@ class LanTransferApp:
         tr.set_language(ui.get("language") or tr.detect_system_language())
 
         self.root.title("%s v%s" % (tr.t("app_title"), lan_transfer.APP_VERSION))
-        self._place_window()
+        self._place_window(ui)
         self.root.configure(bg=BG_BASE)
 
         self.server = None
@@ -139,7 +152,12 @@ class LanTransferApp:
             opacity = int(ui.get("card_opacity", CARD_OPACITY_DEFAULT))
         except (TypeError, ValueError):
             opacity = CARD_OPACITY_DEFAULT
+        # v1.7.0 旧默认 88 且用户没手动改过：迁到新默认 75
+        if opacity == CARD_OPACITY_LEGACY_DEFAULT and not ui.get("card_opacity_set"):
+            opacity = CARD_OPACITY_DEFAULT
         self._card_opacity = max(CARD_OPACITY_MIN, min(CARD_OPACITY_MAX, opacity))
+        self._geom_job = None
+        self._geom_ready = False
 
         self._cards = {}
         self._card_rects = {}
@@ -156,17 +174,65 @@ class LanTransferApp:
         self._build_ui()
         self._try_start()
 
-    def _place_window(self):
-        """按屏幕尺寸自适应初始窗口，1366×768 也不超出屏幕。"""
+    def _place_window(self, ui=None):
+        """恢复用户上次手动调整的窗口大小；没有记录时按屏幕自适应。"""
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
         width = min(1120, max(940, sw - 96))
         height = min(820, max(620, sh - 80))
         x = max(0, (sw - width) // 2)
         y = max(0, (sh - height) // 2 - 20)
+
+        saved = (ui or {}).get("window")
+        if isinstance(saved, dict):
+            try:
+                w = int(saved.get("w", 0))
+                h = int(saved.get("h", 0))
+                if w >= 940 and h >= 600:
+                    width, height = min(w, sw), min(h, sh)
+                sx, sy = int(saved.get("x", x)), int(saved.get("y", y))
+                x = max(0, min(sx, sw - width))
+                y = max(0, min(sy, sh - height))
+            except (TypeError, ValueError):
+                pass
         self.root.geometry("%dx%d+%d+%d" % (width, height, x, y))
-        # 折叠后窗口要能收矮，同时保持不出现滚动条的最小可用尺寸
-        self.root.minsize(940, 220)
+        # 最小尺寸下也要保证四张卡（含全部展开）不被裁切；折叠不再改变窗口大小
+        self.root.minsize(940, 660)
+        self.root.bind("<Configure>", self._on_root_configure)
+        self.root.after(900, self._mark_geometry_ready)
+
+    def _mark_geometry_ready(self):
+        self._geom_ready = True
+
+    def _on_root_configure(self, event):
+        """用户拖动窗口边角时记录尺寸，折叠状态变化不会写这里。"""
+        if event.widget is not self.root or not self._geom_ready:
+            return
+        if self._geom_job:
+            try:
+                self.root.after_cancel(self._geom_job)
+            except Exception:
+                pass
+        self._geom_job = self.root.after(500, self._save_window_geometry)
+
+    def _save_window_geometry(self):
+        self._geom_job = None
+        try:
+            if self.root.state() != "normal":
+                return
+            w, h = self.root.winfo_width(), self.root.winfo_height()
+            if w < 600 or h < 400:
+                return
+            cfg = lan_transfer.load_settings()
+            ui = cfg.get("ui")
+            if not isinstance(ui, dict):
+                ui = {}
+            ui["window"] = {"w": int(w), "h": int(h),
+                            "x": int(self.root.winfo_x()), "y": int(self.root.winfo_y())}
+            cfg["ui"] = ui
+            lan_transfer.save_settings(cfg)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ 图标
     def _apply_icons(self):
@@ -228,11 +294,29 @@ class LanTransferApp:
         self.btn_collapse_all = self._make_btn(head_right, tr.t("btn_collapse_all"),
                                                self._collapse_all, small=True)
         self.btn_collapse_all.pack(side="right")
-        tk.Label(head_right, text="v" + lan_transfer.APP_VERSION, font=("Segoe UI", 9),
-                 fg=MUTED, bg=BG_HEADER).pack(side="right", padx=(0, 4))
+        self._version_label = tk.Label(head_right, text="v" + lan_transfer.APP_VERSION,
+                                       font=("Segoe UI", 9), fg=MUTED, bg=BG_HEADER)
+        self._version_label.pack(side="right", padx=(0, 4))
         self.status_indicator = tk.Label(head_right, text=tr.t("status_stopped"),
                                          font=("Segoe UI", 11), fg=DANGER, bg=BG_HEADER)
         self.status_indicator.pack(side="right", padx=(0, 10))
+
+        # 顶栏可见的卡片不透明度控件（放在左侧品牌区之后，窄窗口也优先保留）
+        self.op_box = tk.Frame(header, bg=BG_HEADER)
+        self.op_box.pack(side="left", padx=(20, 0), pady=10)
+        tk.Label(self.op_box, text=tr.t("opacity_label"), bg=BG_HEADER, fg=TEXT_SOFT,
+                 font=("Segoe UI", 9)).pack(side="left", padx=(0, 4))
+        self.op_scale = tk.Scale(
+            self.op_box, from_=CARD_OPACITY_MIN, to=CARD_OPACITY_MAX,
+            orient="horizontal", showvalue=False, command=self._on_opacity_move,
+            bg=ACCENT, fg=TEXT, troughcolor="#0B1020", activebackground=ACCENT2,
+            highlightthickness=0, bd=0, sliderrelief="flat", length=96, width=9)
+        self.op_scale.pack(side="left")
+        self.top_opacity_label = tk.Label(self.op_box, text="%d%%" % self._card_opacity,
+                                          bg=BG_HEADER, fg=ACCENT2,
+                                          font=("Segoe UI", 9), width=4, anchor="e")
+        self.top_opacity_label.pack(side="left", padx=(2, 0))
+        self.op_scale.set(int(self._card_opacity))
 
         # ---------------- 四张卡片（直接浮在画布上，靠 _layout 定位） ----------------
         self.info_card, info_body = self._create_card("info")
@@ -317,6 +401,7 @@ class LanTransferApp:
                                    style="Pub.Vertical.TScrollbar",
                                    command=self.pub_tree.yview)
         self.pub_tree.configure(yscroll=pub_scroll.set)
+        self._pub_scroll = pub_scroll
         self.pub_tree.pack(side="left", fill="x", expand=True)
         pub_scroll.pack(side="right", fill="y")
 
@@ -347,6 +432,7 @@ class LanTransferApp:
                                     style="Recv.Vertical.TScrollbar",
                                     command=self.recv_tree.yview)
         self.recv_tree.configure(yscroll=recv_scroll.set)
+        self._recv_scroll = recv_scroll
         self.recv_tree.pack(side="left", fill="both", expand=True)
         recv_scroll.pack(side="right", fill="y")
 
@@ -379,44 +465,98 @@ class LanTransferApp:
         self.root.after(2000, self._auto_refresh)
 
     def _create_card(self, key):
-        """卡片容器：标题栏右侧带折叠按钮，正文放在 body 里。"""
+        """卡片容器：统一标题行（标题 + 关键摘要 + 折叠按钮），正文放在 body 里。"""
         card = tk.Frame(self.canvas, bg=PANEL, highlightbackground=CARD_LINE,
                         highlightthickness=1)
-        header = tk.Frame(card, bg=PANEL)
-        header.pack(fill="x", padx=12, pady=(6, 2))
+        header = tk.Frame(card, bg=PANEL, height=CARD_HEADER_H)
+        header.pack(fill="x", padx=10)
+        header.pack_propagate(False)
 
         title = tk.Label(header, text=tr.t(CARD_TITLE_KEYS[key]), bg=PANEL, fg=TEXT,
                          font=("Segoe UI", 11, "bold"), anchor="w")
-        title.pack(side="left")
+        title.pack(side="left", pady=7)
 
-        btn = tk.Button(header, text=tr.t("btn_collapse"),
+        btn = tk.Button(header, text="⌃",
                         command=lambda k=key: self._toggle_card(k),
                         bg=PANEL, fg=MUTED, activebackground=PANEL_ALT,
                         activeforeground=TEXT, relief="flat", bd=0,
-                        font=("Segoe UI", 9), padx=6, pady=1,
+                        font=("Segoe UI", 11), padx=3, pady=0, width=2,
                         cursor="hand2", highlightthickness=0)
-        btn.pack(side="right")
+        btn.pack(side="right", pady=6)
+
+        summary = tk.Label(header, text="", bg=PANEL, fg=MUTED,
+                           font=("Segoe UI", 9), anchor="e")
+        summary.pack(side="right", padx=(8, 6), pady=9)
 
         body = tk.Frame(card, bg=PANEL)
         body.pack(fill="both", expand=True)
 
         self._cards[key] = {"card": card, "header": header, "title": title,
-                            "btn": btn, "body": body}
+                            "btn": btn, "summary": summary, "body": body}
         return card, body
 
     # ------------------------------------------------------------- 折叠控制
     def _card_title_text(self, key):
         return tr.t(CARD_TITLE_KEYS[key])
 
+    def _card_summary_text(self, key):
+        """收起后在标题行右侧显示本卡关键状态。"""
+        if key == "info":
+            if not self._running:
+                return tr.t("sum_info_off")
+            return tr.t("sum_info_run", port=lan_transfer.PORT)
+        if key == "qr":
+            if not self._running:
+                return tr.t("sum_qr_off")
+            addr = self._share_url.split("://", 1)[-1].split("/", 1)[0]
+            return tr.t("sum_qr_run", addr=addr)
+        if key == "pub":
+            return tr.t("sum_pub", count=len(self.pub_tree.get_children()))
+        return tr.t("sum_recv", count=len(self.recv_tree.get_children()))
+
     def _refresh_card_chrome(self, key):
         c = self._cards[key]
+        collapsed = self._collapsed[key]
         try:
             c["title"].configure(text=self._card_title_text(key))
-            c["btn"].configure(
-                text=tr.t("btn_expand") if self._collapsed[key] else tr.t("btn_collapse"),
-                fg=ACCENT2 if self._collapsed[key] else MUTED)
+            # ⌃ 表示可收起，⌄ 表示可展开；四张卡位置、字号、颜色完全一致
+            c["btn"].configure(text="⌄" if collapsed else "⌃",
+                               fg=ACCENT2 if collapsed else MUTED)
+            if collapsed:
+                c["summary"].configure(text=self._card_summary_text(key))
+                if not c["summary"].winfo_manager():
+                    c["summary"].pack(side="right", padx=(8, 6), pady=9)
+            elif c["summary"].winfo_manager():
+                c["summary"].pack_forget()
         except tk.TclError:
             pass
+
+    def _update_card_summaries(self):
+        for key in CARD_KEYS:
+            if self._collapsed[key]:
+                try:
+                    self._cards[key]["summary"].configure(
+                        text=self._card_summary_text(key))
+                except tk.TclError:
+                    pass
+        self._sync_tree_scroll("pub")
+        self._sync_tree_scroll("recv")
+
+    def _sync_tree_scroll(self, key):
+        """内容放得下时隐藏列表滚动条，避免出现多余的滚动条。"""
+        if self._collapsed.get(key):
+            return
+        tree = self.pub_tree if key == "pub" else self.recv_tree
+        scroll = self._pub_scroll if key == "pub" else self._recv_scroll
+        try:
+            if len(tree.get_children()) <= int(tree.cget("height")):
+                if scroll.winfo_manager():
+                    scroll.pack_forget()
+                return
+        except (tk.TclError, ValueError):
+            return
+        if not scroll.winfo_manager():
+            scroll.pack(side="right", fill="y")
 
     def _apply_collapsed(self, key):
         """按折叠状态显示 / 隐藏卡片正文。"""
@@ -433,7 +573,6 @@ class LanTransferApp:
         self._refresh_card_chrome(key)
         self._save_ui_config()
         self._layout()
-        self._apply_window_height()
 
     def _collapse_all(self):
         for key in CARD_KEYS:
@@ -443,7 +582,6 @@ class LanTransferApp:
                 self._refresh_card_chrome(key)
         self._save_ui_config()
         self._layout()
-        self._apply_window_height()
 
     def _expand_all(self):
         for key in CARD_KEYS:
@@ -453,39 +591,90 @@ class LanTransferApp:
                 self._refresh_card_chrome(key)
         self._save_ui_config()
         self._layout()
-        self._apply_window_height()
 
-    def _needed_height(self):
-        """按当前折叠状态算出「刚好放下」的窗口高度。"""
-        gap = 14
-        self.root.update_idletasks()
-        left = 0
-        for key in ("info", "qr"):
-            if self._collapsed[key]:
-                left += COLLAPSED_H
-            else:
-                left += max(self._cards[key]["card"].winfo_reqheight(), 190)
-        right = 0
-        for key in ("pub", "recv"):
-            if self._collapsed[key]:
-                right += COLLAPSED_H
-            else:
-                right += max(self._cards[key]["card"].winfo_reqheight(), 190)
-        content = max(left, right) + gap
-        return 12 + 58 + gap + content + 20
+    # 折叠不再调整窗口尺寸：释放出来的区域留给背景
 
-    def _apply_window_height(self):
-        """折叠/展开后让窗口高度跟随内容，避免留下大片空白。"""
+    def _distribute_height(self, avail, gap, a_key, b_key, req, mins):
+        """在可用高度内分配两列卡片高度；放得下就用自然高度，下面留背景。"""
+        a_collapsed = self._collapsed[a_key]
+        b_collapsed = self._collapsed[b_key]
+        if a_collapsed and b_collapsed:
+            return COLLAPSED_H, COLLAPSED_H
+        if a_collapsed:
+            hb = max(mins[b_key], min(req[b_key], avail - gap - COLLAPSED_H))
+            return COLLAPSED_H, hb
+        if b_collapsed:
+            ha = max(mins[a_key], min(req[a_key], avail - gap - COLLAPSED_H))
+            return ha, COLLAPSED_H
+
+        ha = max(mins[a_key], req[a_key])
+        hb = max(mins[b_key], req[b_key])
+        total = ha + hb + gap
+        if total <= avail + 8:
+            return ha, hb
+
+        room_a = ha - mins[a_key]
+        room_b = hb - mins[b_key]
+        budget = avail - gap - mins[a_key] - mins[b_key]
+        if budget <= 0 or room_a + room_b <= 0:
+            return mins[a_key], mins[b_key]
+        scale = budget / float(room_a + room_b)
+        return int(mins[a_key] + room_a * scale), int(mins[b_key] + room_b * scale)
+
+    def _content_rows(self, key):
+        """返回当前内容行数，用于判断某次拟合是否真的改变了请求高度。"""
         try:
-            need = self._needed_height()
-            sh = self.root.winfo_screenheight()
-            target = int(max(220, min(need, sh - 80)))
-            width = self.root.winfo_width()
-            x = self.root.winfo_x()
-            y = max(0, min(self.root.winfo_y(), sh - target - 40))
-            if abs(self.root.winfo_height() - target) >= 2:
-                self.root.geometry("%dx%d+%d+%d" % (width, target, x, y))
-        except tk.TclError:
+            if key == "info":
+                return int(self.info_text.cget("height"))
+            tree = self.pub_tree if key == "pub" else self.recv_tree
+            return int(tree.cget("height"))
+        except (tk.TclError, ValueError, AttributeError):
+            return 0
+
+    def _fit_info_rows(self, card_h):
+        """把服务信息文本框的行数限制在卡片可用高度内，避免被裁切。"""
+        if not hasattr(self, "info_text"):
+            return
+        lines = getattr(self, "_info_lines", 6)
+        # 窄窗口下长路径会换行：按当前宽度统计真实显示行数，避免内容被藏起来
+        try:
+            shown = self.info_text.count("1.0", "end", "displaylines")
+            if isinstance(shown, tuple):
+                shown = shown[0]
+            lines = max(lines, int(shown))
+        except (tk.TclError, TypeError, ValueError):
+            pass
+        rows = int((max(120, card_h) - 200) // 14)
+        rows = max(4, min(max(lines + 1, 6), rows))
+        try:
+            if int(self.info_text.cget("height")) != rows:
+                self.info_text.config(height=rows)
+        except (tk.TclError, ValueError):
+            pass
+
+    def _want_tree_rows(self, key):
+        """按实际文件数计算列表希望显示的行数（空列表只占 2 行）。"""
+        tree = self.pub_tree if key == "pub" else self.recv_tree
+        try:
+            count = len(tree.get_children())
+        except (tk.TclError, AttributeError):
+            count = 0
+        return max(2, min(8, count + 1))
+
+    def _fit_tree_rows(self, key, card_h):
+        """按卡片高度调整列表可见行数，避免内容溢出卡片。
+
+        只在分配高度确实放不下时收缩，所以文件不多时整列表可见、不出滚动条；
+        空列表也只占 2 行，把空间让给另一列。
+        """
+        tree = self.pub_tree if key == "pub" else self.recv_tree
+        overhead = 146 if key == "pub" else 125
+        rows = int((max(150, card_h) - overhead) // 26)
+        rows = max(2, min(8, rows, self._want_tree_rows(key)))
+        try:
+            if int(tree.cget("height")) != rows:
+                tree.configure(height=rows)
+        except (tk.TclError, ValueError):
             pass
 
     # ------------------------------------------------------------- 布局/背景
@@ -515,16 +704,29 @@ class LanTransferApp:
             left_w = max(300, width - margin * 2 - gap - right_w)
 
         content_top = top + header_h + gap
-        avail = height - content_top - margin
+        avail = height - content_top - 14
 
-        # 长语言（英/俄/西）文案更长，窄窗口下先隐藏副标题，给按钮留空间
+        # 长语言（英/俄/西）文案更长，窄窗口下先隐藏副标题，给按钮和滑块留空间
         if self._tagline is not None:
-            if width < 1020 and self._tagline_shown:
+            if width < 1240 and self._tagline_shown:
                 self._tagline.pack_forget()
                 self._tagline_shown = False
-            elif width >= 1020 and not self._tagline_shown:
+            elif width >= 1240 and not self._tagline_shown:
                 self._tagline.pack(side="left", padx=(12, 0), pady=14)
                 self._tagline_shown = True
+
+        # 窄窗口 + 长语言：隐藏版本号，外观入口收成图标，保证折叠按钮和不透明度滑块不被挤掉
+        compact = width < 1040
+        if compact:
+            if self._version_label.winfo_manager():
+                self._version_label.pack_forget()
+            if self.btn_appearance.cget("text") != "⚙":
+                self.btn_appearance.config(text="⚙")
+        else:
+            if not self._version_label.winfo_manager():
+                self._version_label.pack(side="right", padx=(0, 4))
+            if self.btn_appearance.cget("text") != tr.t("btn_appearance"):
+                self.btn_appearance.config(text=tr.t("btn_appearance"))
 
         # 先确定宽度，再量高度（卡片里的换行文字依赖宽度）
         self.canvas.itemconfigure(self._header_win, width=width - margin * 2,
@@ -537,46 +739,69 @@ class LanTransferApp:
         self.canvas.itemconfigure(self._wins["recv"], width=right_w)
         self.root.update_idletasks()
 
-        req = {key: self._cards[key]["card"].winfo_reqheight() for key in CARD_KEYS}
+        # 自然高度堆叠：放得下就按内容，放不下才按比例收缩；底部余量留背景。
+        # 二维码模块大小与列表行数会反向影响卡片请求高度，迭代两三次让它稳定。
+        last = None
+        info_h = qr_h = pub_h = recv_h = 0
+        for _ in range(5):
+            # 先按文件数给出列表的“希望行数”，再量卡片请求高度：
+            # 否则空列表会把请求高度压到最小，之后文件变多也长不回来
+            for key in ("pub", "recv"):
+                if self._collapsed[key]:
+                    continue
+                want = self._want_tree_rows(key)
+                tree = self.pub_tree if key == "pub" else self.recv_tree
+                try:
+                    if int(tree.cget("height")) != want:
+                        tree.configure(height=want)
+                except (tk.TclError, ValueError):
+                    pass
+            self.root.update_idletasks()
+            req = {key: self._cards[key]["card"].winfo_reqheight()
+                   for key in CARD_KEYS}
+            info_min = min(req["info"], max(260, avail - gap - 145))
+            info_h, qr_h = self._distribute_height(
+                avail, gap, "info", "qr", req, {"info": info_min, "qr": 145})
+            pub_h, recv_h = self._distribute_height(
+                avail, gap, "pub", "recv", req, {"pub": 200, "recv": 150})
 
-        # 左列：服务信息优先按内容高度，二维码吃剩余；折叠后让另一张卡占满
-        if self._collapsed["info"]:
-            info_h = COLLAPSED_H
-            qr_h = max(COLLAPSED_H, avail - gap - info_h)
-        elif self._collapsed["qr"]:
-            qr_h = COLLAPSED_H
-            info_h = max(200, avail - gap - qr_h)
-        else:
-            info_h = min(max(req["info"], 200), max(200, avail - gap - 150))
-            qr_h = max(140, avail - gap - info_h)
+            changed = False
+            # 列内容按分配高度收缩，保证最小窗口下不裁切、不出滚动条
+            for key, height in (("info", info_h), ("pub", pub_h), ("recv", recv_h)):
+                if self._collapsed[key]:
+                    continue
+                before = self._content_rows(key)
+                if key == "info":
+                    self._fit_info_rows(height)
+                else:
+                    self._fit_tree_rows(key, height)
+                changed = changed or self._content_rows(key) != before
 
-        # 右列：发布文件优先按内容高度，接收列表吃剩余
-        if self._collapsed["pub"]:
-            pub_h = COLLAPSED_H
-            recv_h = max(COLLAPSED_H, avail - gap - pub_h)
-        elif self._collapsed["recv"]:
-            recv_h = COLLAPSED_H
-            pub_h = max(220, avail - gap - recv_h)
-        else:
-            pub_h = min(max(req["pub"], 220), max(220, avail - gap - 150))
-            recv_h = max(140, avail - gap - pub_h)
+            # 窗口变矮时按可用高度缩小二维码模块，保证二维码与下方链接都不被裁掉
+            if (self._qr_url and self._qr_modules and not self._collapsed["qr"]):
+                box = self._qr_box_for_height(qr_h)
+                if box != self._qr_box:
+                    self._render_qr(box)
+                    changed = True
+
+            now = (info_h, qr_h, pub_h, recv_h)
+            if now == last and not changed:
+                break
+            last = now
 
         self.canvas.itemconfigure(self._wins["info"], height=info_h)
         self.canvas.itemconfigure(self._wins["qr"], height=qr_h)
         self.canvas.itemconfigure(self._wins["pub"], height=pub_h)
         self.canvas.itemconfigure(self._wins["recv"], height=recv_h)
 
-        # 窗口变矮时按可用高度缩小二维码模块，保证二维码与下方链接都不被裁掉
-        if self._qr_url and self._qr_modules and not self._collapsed["qr"]:
-            box = self._qr_box_for_height(qr_h)
-            if box != self._qr_box:
-                self._render_qr(box)
-
         self.canvas.coords(self._wins["info"], margin, content_top)
         self.canvas.coords(self._wins["qr"], margin, content_top + info_h + gap)
         self.canvas.coords(self._wins["pub"], margin + left_w + gap, content_top)
         self.canvas.coords(self._wins["recv"],
                            margin + left_w + gap, content_top + pub_h + gap)
+
+        self._sync_tree_scroll("pub")
+        self._sync_tree_scroll("recv")
 
         # 记录卡片位置，供背景采样与染色使用
         self._card_rects = {
@@ -615,7 +840,7 @@ class LanTransferApp:
         except Exception:
             pass
 
-    def _save_ui_config(self, language=None):
+    def _save_ui_config(self, language=None, opacity_set=False):
         """折叠状态 / 卡片不透明度 / 语言写入 settings.json。"""
         try:
             cfg = lan_transfer.load_settings()
@@ -624,6 +849,8 @@ class LanTransferApp:
                 ui = {}
             ui["collapsed"] = {key: bool(self._collapsed[key]) for key in CARD_KEYS}
             ui["card_opacity"] = int(self._card_opacity)
+            if opacity_set:
+                ui["card_opacity_set"] = True
             ui["language"] = language or tr.current_language()
             cfg["ui"] = ui
             lan_transfer.save_settings(cfg)
@@ -722,38 +949,53 @@ class LanTransferApp:
         except Exception:
             return BG_BASE_RGB
 
+    def _base_option(self, widget, option):
+        """记录控件第一次见到时的原始色，之后每次都按它重算，避免旧色被当成新基准。"""
+        attr = "_lt_base_" + option
+        if not hasattr(widget, attr):
+            try:
+                value = str(widget.cget(option))
+            except tk.TclError:
+                value = ""
+            setattr(widget, attr, value)
+        return getattr(widget, attr)
+
     def _apply_card_tints(self):
         """按「采样平均色 + 卡片不透明度」给每张卡片算出填充色与描边色。
 
-        说明：Tk 子控件不支持真正的 alpha，这里是把背景平均色与卡片色按比例
-        混合后作为固定填充色，视觉上模拟半透明，并非真正的透明通道。
+        说明：Tk 子控件不支持真正的 alpha，这里是把背景平均色抬到玻璃亮度后
+        与卡片色线性混合得到固定填充色，模拟半透明观感，并非真正的透明通道。
+        背景色权重 = 1 - 不透明度/100，滑块每动一档都会重新计算。
         """
         if not self._card_rects:
             return
-        alpha = self._card_opacity / 100.0
+        alpha = self._card_opacity / 100.0       # 100% = 实色卡片
         style = ttk.Style()
         for key, rect in self._card_rects.items():
             avg = self._sample_avg(rect)
-            fill = darken_clamp(blend_rgb(avg, PANEL_RGB, alpha))
-            fill_alt = darken_clamp(blend_rgb(avg, PANEL_ALT_RGB, alpha), 104)
-            line = darken_clamp(blend_rgb(avg, CARD_LINE_RGB, min(1.0, alpha + 0.2)), 130)
-            btn_bg = darken_clamp(blend_rgb(avg, CARD_LINE_RGB, max(0.55, alpha)), 118)
-            head_bg = darken_clamp(blend_rgb(avg, (35, 42, 68), alpha), 120)
-
-            c = self._cards[key]
-            for widget in (c["card"], c["header"], c["body"], c["title"]):
-                try:
-                    widget.configure(bg=fill)
-                except tk.TclError:
-                    pass
-            try:
-                c["card"].configure(highlightbackground=line, highlightcolor=line)
-            except tk.TclError:
-                pass
+            target = glass_target(avg)
+            fill = darken_clamp(blend_rgb(target, PANEL_RGB, alpha), 150)
+            fill_alt = darken_clamp(blend_rgb(target, PANEL_ALT_RGB, alpha), 168)
+            line = darken_clamp(blend_rgb(target, CARD_LINE_RGB, min(1.0, alpha + 0.2)), 175)
+            btn_bg = darken_clamp(blend_rgb(target, CARD_LINE_RGB, max(0.55, alpha)), 160)
+            head_bg = darken_clamp(blend_rgb(target, (35, 42, 68), alpha), 172)
 
             fill_hex = "#%02X%02X%02X" % fill
             alt_hex = "#%02X%02X%02X" % fill_alt
             btn_hex = "#%02X%02X%02X" % btn_bg
+            line_hex = "#%02X%02X%02X" % line
+
+            c = self._cards[key]
+            for widget in (c["card"], c["header"], c["body"], c["title"]):
+                try:
+                    widget.configure(bg=fill_hex)
+                except tk.TclError:
+                    pass
+            try:
+                c["card"].configure(highlightbackground=line_hex, highlightcolor=line_hex)
+            except tk.TclError:
+                pass
+
             mapping = {PANEL: fill_hex, PANEL_ALT: alt_hex, CARD_LINE: btn_hex}
             self._tint_children(c["body"], mapping)
             self._tint_children(c["header"], mapping)
@@ -776,35 +1018,20 @@ class LanTransferApp:
                 tree.tag_configure("odd", background=zebra, foreground="#FFFFFF")
 
     def _tint_children(self, parent, mapping):
-        """递归把卡片内仍是旧基准色的控件换成采样色，按钮同步 hover 色。"""
+        """递归按原始基准色染色；按钮同步 hover 色，重复调用也不会残留旧色。"""
         for child in parent.winfo_children():
-            try:
-                bg = str(child.cget("bg"))
-            except tk.TclError:
-                bg = ""
-            if bg in mapping:
-                try:
-                    child.configure(bg=mapping[bg])
-                except tk.TclError:
-                    pass
-            for option in ("activebackground", "selectcolor", "troughcolor"):
-                try:
-                    value = str(child.cget(option))
-                except tk.TclError:
-                    continue
-                if value in mapping:
+            for option in ("bg", "activebackground", "selectcolor", "troughcolor"):
+                base = self._base_option(child, option)
+                if base in mapping:
                     try:
-                        child.configure(**{option: mapping[value]})
+                        child.configure(**{option: mapping[base]})
                     except tk.TclError:
                         pass
 
             if isinstance(child, tk.Button) and not getattr(child, "_primary_button", False):
-                try:
-                    old = str(child.cget("bg"))
-                except tk.TclError:
-                    old = ""
-                target = mapping.get(old, old)
-                if target and target.startswith("#"):
+                base = self._base_option(child, "bg")
+                target = mapping.get(base)
+                if target:
                     child._normal_bg = target
                     child._hover_bg = "#%02X%02X%02X" % lighten(
                         tuple(int(target[i:i + 2], 16) for i in (1, 3, 5)))
@@ -925,12 +1152,13 @@ class LanTransferApp:
         self.opacity_label.pack(side="right")
 
         self._opacity_var = tk.IntVar(value=int(self._card_opacity))
-        tk.Scale(
+        self._dialog_op_scale = tk.Scale(
             wrap, from_=CARD_OPACITY_MIN, to=CARD_OPACITY_MAX, orient="horizontal",
             variable=self._opacity_var, command=self._on_opacity_move, showvalue=False,
-            bg=PANEL, fg=TEXT, troughcolor=PANEL_ALT, highlightthickness=0,
-            sliderrelief="flat", activebackground=ACCENT, bd=0,
-            length=420).pack(fill="x", padx=12, pady=(2, 2))
+            bg=ACCENT, fg=TEXT, troughcolor="#0B1020", highlightthickness=0,
+            sliderrelief="flat", activebackground=ACCENT2, bd=0,
+            length=420)
+        self._dialog_op_scale.pack(fill="x", padx=12, pady=(2, 2))
         tk.Label(wrap, text=tr.t("opacity_tip"), bg=PANEL, fg=MUTED,
                  font=("Segoe UI", 8), wraplength=420,
                  justify="left").pack(anchor="w", padx=12)
@@ -1038,10 +1266,22 @@ class LanTransferApp:
                                      min(CARD_OPACITY_MAX, int(float(value))))
         except (TypeError, ValueError):
             return
-        if getattr(self, "opacity_label", None) is not None:
-            self.opacity_label.config(text="%d%%" % self._card_opacity)
-        self._save_ui_config()
-        self._bg_drawn = None
+        for scale in (getattr(self, "op_scale", None),
+                      getattr(self, "_dialog_op_scale", None)):
+            if scale is not None:
+                try:
+                    if int(float(scale.get())) != self._card_opacity:
+                        scale.set(self._card_opacity)
+                except (tk.TclError, ValueError):
+                    pass
+        for label in (getattr(self, "opacity_label", None),
+                      getattr(self, "top_opacity_label", None)):
+            if label is not None:
+                try:
+                    label.config(text="%d%%" % self._card_opacity)
+                except tk.TclError:
+                    pass
+        self._save_ui_config(opacity_set=True)
         self._apply_card_tints()
 
     def _on_lang_change(self, name):
@@ -1216,6 +1456,7 @@ class LanTransferApp:
         self.url_label.config(text="")
         self._clear_qr()
         self._update_discovery_label()
+        self._update_card_summaries()
 
     def _toggle_discovery(self):
         """切换「在局域网内可见」，并持久化到 settings.json。"""
@@ -1278,6 +1519,7 @@ class LanTransferApp:
             self._show_qr(self._share_url)
             self._refresh_all()
             self._update_discovery_label()
+            self._update_card_summaries()
 
         except Exception as e:
             messagebox.showerror(tr.t("dlg_error"), str(e))
@@ -1289,7 +1531,8 @@ class LanTransferApp:
         self.info_text.config(state="disabled")
         # 行数自适应（长路径会换行，留 3 行余量），避免空间/目录信息被截断
         lines = text.count("\n") + 1
-        self.info_text.config(height=min(max(lines + 3, 6), 20))
+        self._info_lines = lines
+        self.info_text.config(height=min(max(lines + 1, 6), 20))
         self.root.after(60, self._layout)
 
     def _show_qr(self, url):
@@ -1356,8 +1599,14 @@ class LanTransferApp:
 
     def _refresh_all(self):
         """同时刷新发布/接收两个列表。"""
+        before = (len(self.pub_tree.get_children()), len(self.recv_tree.get_children()))
         self._refresh_tree(self.pub_tree, lan_transfer.list_files(lan_transfer.PUBLISH_DIR))
         self._refresh_tree(self.recv_tree, lan_transfer.list_files(lan_transfer.RECEIVE_DIR))
+        after = (len(self.pub_tree.get_children()), len(self.recv_tree.get_children()))
+        if before != after:
+            # 文件数变化后按新数量重新分配列表可见行数
+            self._layout()
+        self._update_card_summaries()
 
     def _auto_refresh(self):
         """定时刷新（接收目录可能有手机上传的新文件）。"""

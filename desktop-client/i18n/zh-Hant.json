@@ -102,5 +102,11 @@
   "lang_restart_title": "需要重新啟動",
   "lang_restart_msg": "語言已儲存。重新啟動後新語言生效，現在要重新啟動嗎？",
   "restart_now": "現在重新啟動",
-  "restart_later": "稍後手動重新啟動"
+  "restart_later": "稍後手動重新啟動",
+  "sum_info_run": "運行中 · 連接埠 {port}",
+  "sum_info_off": "服務未啟動",
+  "sum_qr_run": "{addr}",
+  "sum_qr_off": "服務未啟動",
+  "sum_pub": "已發佈 {count} 個檔案",
+  "sum_recv": "已接收 {count} 個檔案"
 }
