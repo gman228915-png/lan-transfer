@@ -43,6 +43,7 @@ token.txt
 desktop-client/spaces.yaml
 desktop-client/spaces.json
 desktop-client/token.txt
+desktop-client/settings.json
 
 # ============================================================
 # 证书与私钥（敏感信息，不入库）

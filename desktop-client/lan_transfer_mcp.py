@@ -38,7 +38,7 @@ import traceback
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lan_transfer_cli as cli  # noqa: E402
 
-MCP_VERSION = "1.5.0"
+MCP_VERSION = "1.6.0"
 SERVER_NAME = "lan-transfer-mcp"
 PROTOCOL_VERSION = "2024-11-05"
 

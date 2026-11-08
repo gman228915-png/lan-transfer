@@ -3,7 +3,7 @@
 电脑上双击一个 exe 就能在局域网里开一个文件共享服务：手机和电脑连同一个 Wi-Fi，
 扫码或输入地址即可双向传文件，**不经过外网、不需要账号、不用数据线**。
 
-**当前版本：v1.5.0（2026-11-06）** ｜ [更新记录](CHANGELOG.md) ｜ [HTTP 接口文档](docs/api.md) ｜ [MCP 文档](docs/mcp.md) ｜ [GitHub 仓库](https://github.com/gman228915-png/lan-transfer)
+**当前版本：v1.6.0（2026-11-08）** ｜ [更新记录](CHANGELOG.md) ｜ [HTTP 接口文档](docs/api.md) ｜ [MCP 文档](docs/mcp.md) ｜ [GitHub 仓库](https://github.com/gman228915-png/lan-transfer)
 
 ## 功能一览
 
@@ -18,6 +18,8 @@
 | 断点续传 | 下载 `.part` + `Range` + `If-Range`，完成后校验整文件 sha256 再改名；上传走分片会话（8MB/片），中断后从服务端偏移继续；**服务端重启后会话自动恢复** | 服务端需为 v1.4.0+（重启恢复需 v1.5.0+）；旧服务端自动回退一次性上传 |
 | 局域网发现 | 服务端每 3 秒 UDP 广播（端口 8766，不含口令）；CLI `discover`、安卓端自动扫描列出同网段服务 | 需要同一网段且防火墙放行 UDP 8766；跨网段需 `--any-subnet` |
 | 稳定性（v1.5） | 服务端上传并发上限（默认 4），超出返回 `429` + 中文提示；`rotate-token` 平滑轮换口令，旧口令宽限期内仍可用 | 并发上限当前写死为 4；口令宽限期最长 7 天 |
+| **外观自定义（v1.6 新增）** | 电脑端 / 网页端 / 安卓端都可换本地背景图；电脑端和网页端支持铺满 / 适应 / 平铺 / 居中 + 遮罩浓度 0–100%；设置分别持久化到 `settings.json`、IndexedDB + localStorage、`SharedPreferences` | Tkinter 卡片不支持真 alpha 混合，用深色面板 + 暗化层实现可读性；安卓端仅构建验证 |
+| **品牌图标（v1.6 新增）** | 统一「文件传输」图标：exe / 标题栏 / 任务栏 / 窗口左上角、网页 favicon 与标题 logo、安卓 launcher；源文件 `icon.svg` + `make_icons.py` 可随时重生成 | 16/24px 使用简化版图形，细节比大尺寸少 |
 | 多空间隔离 | 通过 `spaces.yaml` 把不同目录分成独立空间，可设只读、独立口令 | 只发布/列出单层文件，不展示子目录；越界路径一律拒绝 |
 
 ## 交付文件
@@ -95,6 +97,69 @@
 程序请求 8765，若被占用会在 **8765 ~ 8776** 之间自动找空闲端口，
 「服务信息」卡片会多出一行提示：`端口提示：默认端口 8765 被占用，已自动改用 XXXX`。
 以窗口里显示的端口为准重新扫码 / 打开链接即可，不需要手动处理。
+
+## 外观自定义（v1.6 新增）
+
+这一版只做界面与品牌，不改任何传输逻辑和 HTTP / MCP 接口。
+
+### 电脑端：换背景
+
+1. 点窗口右上角 **「更换背景」**，打开「外观 · 背景」面板。
+2. 点 **「选择图片…」**，选一张本地图片即可立即生效。支持 **JPG / JPEG / PNG / WebP / BMP**。
+3. **显示方式**四选一：
+   | 方式 | 效果 |
+   |---|---|
+   | 铺满（默认） | 等比放大并居中裁切，铺满整个窗口，不留边 |
+   | 适应 | 等比缩小到完整显示，四周留底色 |
+   | 平铺 | 缩到约 480px 高后重复排列 |
+   | 居中 | 保持原始大小居中；比窗口大时居中裁切 |
+4. **背景遮罩浓度** 0–100%：越高背景越暗。卡片本身是深色面板，文字始终可读；默认 45%。
+5. **恢复默认背景**：清空图片并把显示方式/浓度恢复为「铺满 / 45%」。
+
+设置保存在数据目录（默认是 exe 同级的 `settings.json`）的 `background` 字段：
+
+```json
+{
+  "background": { "path": "D:\\壁纸\\bg.jpg", "mode": "fill", "dim": 45 }
+}
+```
+
+重启后自动生效。图片文件被删除或移动时，程序会安静地回退到默认背景，不会报错。
+
+**性能**：背景图只在选择/启动时读盘一次，超过 2560px 的图片会先等比缩小再缓存；
+窗口缩放时只重算尺寸，不会每次重绘都读盘，所以拖动窗口不会卡顿。
+
+> Tkinter 的子控件不支持真正的 alpha 混合，所以卡片采用「深色面板 + 背景暗化层」来保证可读性；
+> 背景图在卡片四周、卡片之间的间隙可见。
+
+### 网页端：换背景
+
+- 页面右上角 **图片图标** → 「外观 · 背景」。
+- 点「选择图片…」选本地图片；图片以 dataURL 存进浏览器 **IndexedDB**（库名 `lan-transfer`，`media` 表），
+  显示方式与浓度存在 `localStorage`（key `lan-transfer-bg`），刷新、关标签页后仍在。
+- 显示方式与浓度含义和电脑端一致；「恢复默认背景」会同时清掉 IndexedDB 里的记录。
+- 图片恢复是**异步**的（延迟 300ms 读取），不会阻塞已上传文件列表的加载；单张限制 8MB。
+- 背景只存在本机浏览器，不上传、不写入服务端目录；换浏览器或清缓存即恢复默认。
+
+### 安卓端：换背景
+
+- 「连接服务器」卡片右上角 **「🖼 背景」** → 选择背景图片 / 恢复默认背景。
+- 通过系统文件选择器（`ACTION_OPEN_DOCUMENT`）取图并申请持久读权限，Uri 存 `SharedPreferences`；
+  大图按屏幕宽度降采样解码，避免 OOM；遮罩固定 45%。
+- **限制**：本轮没有真机/模拟器，只做了 Gradle 构建与签名验证，未做运行时点击验证。
+
+### 图标与品牌
+
+- 源文件在 [`assets/branding/`](assets/branding/)：`icon.svg`（矢量设计稿）+ `make_icons.py`（生成脚本）。
+- 重新生成（改配色只需改脚本顶部常量与 `icon.svg`）：
+
+```bash
+python assets/branding/make_icons.py
+```
+
+会输出 `icon-1024.png`、多尺寸 `icon.ico`（16/24/32/48/64/128/256，其中 16/24 用简化版保证小尺寸可辨）、
+网页 favicon / logo、安卓 `mipmap-*` 各密度 launcher icon，并自动复制到 `desktop-client/`、`static/`、`android-app/`。
+电脑端窗口图标、exe 图标、网页 favicon 与标题 logo、安卓桌面图标共用同一套图形。
 
 ## 网页端与安卓端
 
@@ -397,15 +462,21 @@ spaces:
 ```
 .
 ├── desktop-client/                  # 电脑端（Python 3 + Tkinter）
-│   ├── main_gui.py                  # 桌面 GUI
+│   ├── main_gui.py                  # 桌面 GUI（含背景自定义）
 │   ├── lan_transfer.py              # 核心服务（HTTP/HTTPS、空间、上传下载、口令、headless）
 │   ├── lan_transfer_cli.py          # 命令行客户端
 │   ├── lan_transfer_mcp.py          # MCP 服务器（stdio，供 AI 直接调用）
-│   ├── static/                      # 网页端（index.html / app.js / style.css / qrcode.js）
+│   ├── icon.ico                     # exe / 窗口图标（由 assets/branding 生成）
+│   ├── static/                      # 网页端（index.html / app.js / style.css / qrcode.js + favicon/logo）
 │   ├── gen_mtls.py                  # 生成自签名证书（可选）
 │   ├── run_desktop.bat              # 免打包，直接源码运行
 │   ├── lan-transfer-desktop.spec    # 桌面端 PyInstaller 配置
 │   └── lan-transfer-cli.spec        # 命令行 PyInstaller 配置
+├── assets/branding/                 # 品牌图标源文件
+│   ├── icon.svg                     # 矢量设计稿（改配色参考）
+│   ├── make_icons.py                # 生成 ICO / PNG / favicon / 安卓 mipmap
+│   ├── icon.ico                     # 多尺寸（16/24/32/48/64/128/256）
+│   └── icon-1024.png                # 1024×1024 PNG 源图
 ├── docs/api.md                      # HTTP / API 契约文档
 ├── docs/mcp.md                      # MCP 工具、配置与示例对话
 ├── android-app/                     # 安卓端（Kotlin + Gradle）
