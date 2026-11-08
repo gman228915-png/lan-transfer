@@ -38,7 +38,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "lan-transfer"
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.6.0"
 API_VERSION = 1
 
 TOKEN_CHARS = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -1033,7 +1033,7 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         path = urllib.parse.unquote(parsed.path)
 
         if path == "/favicon.ico":
-            self._send(204)
+            self._serve_static("favicon.ico")
             return
 
         if path in ("/api/health", "/api/version"):
@@ -1292,7 +1292,9 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         self._send(200, body, "text/html; charset=utf-8", {"Set-Cookie": cookie})
 
     def _serve_static(self, name):
-        allowed = {"qrcode.js", "app.js", "style.css"}
+        allowed = {"qrcode.js", "app.js", "style.css",
+                   "favicon.ico", "favicon.svg", "favicon-32.png",
+                   "logo-96.png", "logo-192.png", "brand-48.png", "brand-256.png"}
         if name not in allowed:
             self._send(404, "404 Not Found")
             return
@@ -1300,7 +1302,10 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         if not os.path.isfile(path):
             self._send(404, "404 Not Found")
             return
-        ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        overrides = {".svg": "image/svg+xml", ".ico": "image/x-icon",
+                     ".png": "image/png"}
+        ext = os.path.splitext(name)[1].lower()
+        ctype = overrides.get(ext) or mimetypes.guess_type(path)[0] or "application/octet-stream"
         with open(path, "rb") as fh:
             body = fh.read()
         self._send(200, body, ctype, {"Cache-Control": "max-age=86400"})

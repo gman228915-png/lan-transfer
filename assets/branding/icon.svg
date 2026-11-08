@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  局域网互传 · 品牌图标（矢量源文件）
+
+  设计：深色圆角底 + 左右两台设备 + 中间双向传输箭头。
+  配色与界面保持一致：
+    · 底色渐变  #1C2747 → #0B1020
+    · 设备      #EAF0FF（浅色机身）+ #121A31（屏幕）
+    · 右向箭头  #5B8CFF（主色）
+    · 左向箭头  #31D6B0（强调色）
+
+  说明：本文件是设计稿与配色参考。位图（ICO / PNG / 安卓 mipmap）
+  由同目录的 make_icons.py 用同一套几何参数生成，改配色时两处同步即可。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="文件传输">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1C2747"/>
+      <stop offset="0.55" stop-color="#141C33"/>
+      <stop offset="1" stop-color="#0B1020"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7EA5FF"/>
+      <stop offset="1" stop-color="#5B8CFF"/>
+    </linearGradient>
+    <linearGradient id="left" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0" stop-color="#4EE6C2"/>
+      <stop offset="1" stop-color="#31D6B0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角底 -->
+  <rect width="1024" height="1024" rx="210" fill="url(#bg)"/>
+  <rect x="6" y="6" width="1012" height="1012" rx="204" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="8"/>
+
+  <!-- 左侧设备（手机） -->
+  <g>
+    <rect x="128" y="296" width="116" height="432" rx="42" fill="#EAF0FF"/>
+    <rect x="144" y="320" width="84" height="356" rx="26" fill="#121A31"/>
+    <rect x="170" y="690" width="32" height="10" rx="5" fill="#5B8CFF"/>
+  </g>
+
+  <!-- 右侧设备（平板） -->
+  <g>
+    <rect x="764" y="340" width="132" height="344" rx="44" fill="#EAF0FF"/>
+    <rect x="782" y="364" width="96" height="268" rx="26" fill="#121A31"/>
+    <circle cx="830" cy="654" r="9" fill="#31D6B0"/>
+  </g>
+
+  <!-- 右向箭头（电脑 → 手机 方向） -->
+  <path d="M292 370 H640 V300 L716 412 L640 524 V454 H292 Z" fill="url(#right)"/>
+
+  <!-- 左向箭头（手机 → 电脑 方向） -->
+  <path d="M716 570 H368 V502 L292 612 L368 726 V654 H716 Z" fill="url(#left)"/>
+</svg>
