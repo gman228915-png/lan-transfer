@@ -5,7 +5,7 @@ a = Analysis(
     ['main_gui.py'],
     pathex=[],
     binaries=[],
-    datas=[('static', 'static'), ('icon.ico', '.')],
+    datas=[('static', 'static'), ('i18n', 'i18n'), ('icon.ico', '.')],
     hiddenimports=['cryptography', 'qrcode', 'PIL.ImageTk'],
     hookspath=[],
     hooksconfig={},

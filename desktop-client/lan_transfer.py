@@ -38,7 +38,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "lan-transfer"
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.7.0"
 API_VERSION = 1
 
 TOKEN_CHARS = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -1048,7 +1048,7 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
             return
 
         if path.startswith("/static/"):
-            self._serve_static(os.path.basename(path))
+            self._serve_static(path[len("/static/"):].lstrip("/"))
             return
 
         token = self._token(query)
@@ -1292,9 +1292,12 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         self._send(200, body, "text/html; charset=utf-8", {"Set-Cookie": cookie})
 
     def _serve_static(self, name):
-        allowed = {"qrcode.js", "app.js", "style.css",
+        allowed = {"qrcode.js", "app.js", "i18n.js", "style.css",
                    "favicon.ico", "favicon.svg", "favicon-32.png",
-                   "logo-96.png", "logo-192.png", "brand-48.png", "brand-256.png"}
+                   "logo-96.png", "logo-192.png", "brand-48.png", "brand-256.png",
+                   "i18n/zh-Hans.json", "i18n/zh-Hant.json", "i18n/en.json",
+                   "i18n/ja.json", "i18n/ko.json", "i18n/es.json", "i18n/ru.json"}
+        # 只接受白名单里的相对路径，避免目录穿越
         if name not in allowed:
             self._send(404, "404 Not Found")
             return
@@ -1303,7 +1306,7 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
             self._send(404, "404 Not Found")
             return
         overrides = {".svg": "image/svg+xml", ".ico": "image/x-icon",
-                     ".png": "image/png"}
+                     ".png": "image/png", ".json": "application/json; charset=utf-8"}
         ext = os.path.splitext(name)[1].lower()
         ctype = overrides.get(ext) or mimetypes.guess_type(path)[0] or "application/octet-stream"
         with open(path, "rb") as fh:
