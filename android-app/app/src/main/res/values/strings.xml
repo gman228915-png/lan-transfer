@@ -1,3 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">局域网互传</string>
+    <string name="app_name">LAN Transfer</string>
+
+    <!-- connection panel -->
+    <string name="connect_title">Connect to server</string>
+    <string name="btn_background">Background</string>
+    <string name="hint_url">https://computer-ip:8765</string>
+    <string name="hint_token">Access token (the part after ?k=)</string>
+    <string name="btn_connect">Connect</string>
+    <string name="btn_upload">Upload</string>
+    <string name="btn_scan">Scan</string>
+    <string name="btn_scanning">Scanning…</string>
+    <string name="btn_qrscan">Scan QR</string>
+    <string name="btn_downloads">Downloads</string>
+    <string name="status_disconnected">Not connected</string>
+    <string name="status_not_connected">Not connected · scan the QR or enter the address, then tap Connect</string>
+    <string name="status_reconnecting">Reconnecting to the last computer…</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_failed">Connection failed</string>
+    <string name="empty_files">No files yet. Tap Upload above to add some.</string>
+    <string name="bg_custom_desc">Custom background</string>
+
+    <!-- spaces -->
+    <string name="space_all">All spaces</string>
+    <string name="space_ro_suffix"> (read-only)</string>
+    <string name="space_readonly_toast">Space \"%1$s\" is read-only; you can only download</string>
+    <string name="files_info">Space: %1$s · %2$d files</string>
+
+    <!-- appearance -->
+    <string name="dlg_appearance_title">Appearance · Background</string>
+    <string name="dlg_pick_bg">Choose background image</string>
+    <string name="dlg_reset_bg">Restore default background</string>
+    <string name="dlg_language">Language</string>
+    <string name="language_follow_system">Follow system</string>
+    <string name="toast_bg_updated">Background updated</string>
+    <string name="toast_bg_reset">Default background restored</string>
+    <string name="toast_bg_invalid">The background image is no longer available. Choose another one.</string>
+
+    <!-- discovery -->
+    <string name="discover_scanning">Scanning the local network…</string>
+    <string name="discover_scanning_auto">Scanning the local network automatically…</string>
+    <string name="device_none">No devices found (use the QR code or enter the address)</string>
+    <string name="discover_found_hint">Found %1$d device(s). Pick one, then connect.</string>
+    <string name="discover_found_toast">Found %1$d device(s). Pick one, then tap Connect.</string>
+    <string name="discover_empty_auto">No devices found: tap Scan to retry, or use the QR code / manual address</string>
+    <string name="discover_empty_manual">No devices found: make sure the computer app is running and both are on the same Wi-Fi</string>
+    <string name="discover_empty_toast">No devices found. Check the same Wi-Fi or scan the QR code instead.</string>
+
+    <!-- scanning -->
+    <string name="scan_prompt">Scan the QR code on the computer</string>
+    <string name="scan_bad_qr">Could not read the QR code</string>
+    <string name="scan_no_token">The QR code has no token. Enter the token shown on the computer.</string>
+    <string name="scan_ok">Detected: %1$s</string>
+
+    <!-- common -->
+    <string name="busy">Transfer in progress, please wait</string>
+    <string name="err_network">Network error</string>
+    <string name="err_no_server">Connect to the server first</string>
+    <string name="err_need_url">Enter the computer address, e.g. https://192.168.1.10:8765</string>
+    <string name="err_need_token">Enter the token (shown in the computer window)</string>
+    <string name="err_connect">Cannot reach the server</string>
+    <string name="pin_title">Certificate fingerprint changed</string>
+    <string name="pin_clear_reconnect">Clear and reconnect</string>
+    <string name="cancel">Cancel</string>
+    <string name="close">Close</string>
+    <string name="delete">Delete</string>
+    <string name="delete_title">Delete</string>
+    <string name="deleted">Deleted</string>
+    <string name="confirm_delete">Delete \"%1$s\"?</string>
+    <string name="delete_fail">Delete failed</string>
+    <string name="retry">Retry</string>
+    <string name="dlg_error">Operation failed</string>
+    <string name="back">Back</string>
+
+    <!-- upload -->
+    <string name="pick_files_title">Choose files (multiple allowed)</string>
+    <string name="uploading_name">Uploading: %1$s</string>
+    <string name="upload_progress">Uploading %1$d/%2$d</string>
+    <string name="upload_done">Upload complete</string>
+    <string name="upload_done_toast">Uploaded %1$d file(s)</string>
+    <string name="upload_partial">Failed %1$d/%2$d</string>
+    <string name="upload_fail_msg">Upload failed: %1$s\n\nSucceeded %2$d / %3$d</string>
+
+    <!-- download -->
+    <string name="download">Download</string>
+    <string name="downloading_name">Downloading: %1$s</string>
+    <string name="downloading_label">Download %1$s</string>
+    <string name="download_saved">Saved to: %1$s</string>
+    <string name="download_done">Download complete</string>
+    <string name="download_fail">Download failed</string>
+    <string name="download_fail_msg">Download failed. Check the Wi-Fi connection.</string>
+    <string name="eta"> · %1$ds left</string>
+    <string name="unnamed_file">unnamed-file</string>
+
+    <!-- downloaded files -->
+    <string name="downloads_title">Downloaded files</string>
+    <string name="downloads_empty">No downloaded files yet.</string>
+    <string name="downloads_count">%1$d downloaded file(s) (tap to manage)</string>
+    <string name="share_all">Share all</string>
+    <string name="open">Open</string>
+    <string name="share">Share</string>
+    <string name="move_save">Move / save to a public folder</string>
+    <string name="no_app">No app can open this file</string>
+    <string name="open_fail">Could not open: %1$s</string>
+    <string name="picker_fail">Could not open the location picker: %1$s</string>
+    <string name="confirm_delete_local">Delete \"%1$s\"? This cannot be undone.</string>
+    <string name="export_done_title">Export finished</string>
+    <string name="export_done_msg">The file was saved to the location you chose.\nDelete the copy inside the app?</string>
+    <string name="delete_copy">Delete copy</string>
+    <string name="keep">Keep</string>
+    <string name="export_fail">Export failed</string>
+    <string name="fm_unsupported_title">File manager not supported</string>
+    <string name="fm_unsupported_msg">Some phones (Huawei, Xiaomi, OPPO) restrict access to app-private folders.\n\nUse Share to send the file to WeChat/QQ, or open the path manually in a file manager:\n\n%1$s</string>
+    <string name="copy_path">Copy path</string>
+    <string name="no_downloads_toast">No downloaded files yet</string>
+    <string name="share_link_fail">Could not create a share link</string>
+    <string name="share_title">Share downloaded files</string>
+    <string name="html_downloads_title">Downloaded %1$d file(s)</string>
+    <string name="html_col_name">File name</string>
+    <string name="html_col_size">Size</string>
+    <string name="html_title">Downloaded files</string>
+    <string name="path_copied_text">LAN Transfer download path: %1$s</string>
+    <string name="path_copied">Path copied</string>
 </resources>

@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">局域网互传</string>
+
+    <string name="connect_title">连接服务器</string>
+    <string name="btn_background">背景</string>
+    <string name="hint_url">https://电脑IP:8765</string>
+    <string name="hint_token">口令 token（?k= 后面的部分）</string>
+    <string name="btn_connect">连接</string>
+    <string name="btn_upload">上传文件</string>
+    <string name="btn_scan">扫描</string>
+    <string name="btn_scanning">扫描中…</string>
+    <string name="btn_qrscan">扫码</string>
+    <string name="btn_downloads">已下载</string>
+    <string name="status_disconnected">未连接</string>
+    <string name="status_not_connected">未连接 · 扫码或输入地址后点连接</string>
+    <string name="status_reconnecting">正在连接上次的电脑…</string>
+    <string name="status_connecting">连接中…</string>
+    <string name="status_connected">已连接 ✓</string>
+    <string name="status_failed">连接失败</string>
+    <string name="empty_files">暂无文件，点击上方「上传文件」添加</string>
+    <string name="bg_custom_desc">自定义背景</string>
+
+    <string name="space_all">全部空间</string>
+    <string name="space_ro_suffix">（只读）</string>
+    <string name="space_readonly_toast">空间「%1$s」为只读，只能下载</string>
+    <string name="files_info">空间：%1$s · 共 %2$d 个文件</string>
+
+    <string name="dlg_appearance_title">外观 · 背景</string>
+    <string name="dlg_pick_bg">选择背景图片</string>
+    <string name="dlg_reset_bg">恢复默认背景</string>
+    <string name="dlg_language">语言</string>
+    <string name="language_follow_system">跟随系统</string>
+    <string name="toast_bg_updated">背景已更新</string>
+    <string name="toast_bg_reset">已恢复默认背景</string>
+    <string name="toast_bg_invalid">背景图片已失效，请重新选择</string>
+
+    <string name="discover_scanning">正在扫描局域网设备…</string>
+    <string name="discover_scanning_auto">正在自动扫描局域网设备…</string>
+    <string name="device_none">未发现设备（可扫码或手输）</string>
+    <string name="discover_found_hint">发现 %1$d 台设备，点选后连接</string>
+    <string name="discover_found_toast">发现 %1$d 台设备，选中后点连接</string>
+    <string name="discover_empty_auto">未发现设备：可点扫描重试，或扫码/手输地址</string>
+    <string name="discover_empty_manual">未发现设备：请确认电脑端已启动、手机与电脑在同一 Wi-Fi</string>
+    <string name="discover_empty_toast">未发现设备，请检查同一 Wi-Fi 或改用扫码</string>
+
+    <string name="scan_prompt">扫描电脑端二维码</string>
+    <string name="scan_bad_qr">无法识别二维码内容</string>
+    <string name="scan_no_token">二维码里没有口令，请输入电脑端显示的口令</string>
+    <string name="scan_ok">已识别：%1$s</string>
+
+    <string name="busy">正在传输，请稍候</string>
+    <string name="err_network">网络异常</string>
+    <string name="err_no_server">请先连接服务器</string>
+    <string name="err_need_url">请输入电脑端地址，如 https://192.168.1.10:8765</string>
+    <string name="err_need_token">请输入口令（电脑端窗口里能看到）</string>
+    <string name="err_connect">无法连接到服务器</string>
+    <string name="pin_title">证书指纹变化</string>
+    <string name="pin_clear_reconnect">清除并重连</string>
+    <string name="cancel">取消</string>
+    <string name="close">关闭</string>
+    <string name="delete">删除</string>
+    <string name="delete_title">删除</string>
+    <string name="deleted">已删除</string>
+    <string name="confirm_delete">确定删除《%1$s》吗？</string>
+    <string name="delete_fail">删除失败</string>
+    <string name="retry">重试</string>
+    <string name="dlg_error">操作失败</string>
+    <string name="back">返回</string>
+
+    <string name="pick_files_title">选择文件（可多选）</string>
+    <string name="uploading_name">上传：%1$s</string>
+    <string name="upload_progress">上传 %1$d/%2$d</string>
+    <string name="upload_done">上传完成 ✓</string>
+    <string name="upload_done_toast">已上传 %1$d 个文件</string>
+    <string name="upload_partial">失败 %1$d/%2$d 个</string>
+    <string name="upload_fail_msg">上传失败：%1$s\n\n已成功 %2$d / %3$d 个</string>
+
+    <string name="download">下载</string>
+    <string name="downloading_name">下载：%1$s</string>
+    <string name="downloading_label">下载 %1$s</string>
+    <string name="download_saved">已下载到：%1$s</string>
+    <string name="download_done">下载完成 ✓</string>
+    <string name="download_fail">下载失败</string>
+    <string name="download_fail_msg">下载失败，请检查 Wi-Fi</string>
+    <string name="eta"> · 剩余 %1$d 秒</string>
+    <string name="unnamed_file">未命名文件</string>
+
+    <string name="downloads_title">已下载的文件</string>
+    <string name="downloads_empty">还没有下载文件。</string>
+    <string name="downloads_count">已下载 %1$d 个文件（点击管理）</string>
+    <string name="share_all">全部分享</string>
+    <string name="open">打开</string>
+    <string name="share">分享</string>
+    <string name="move_save">移动/另存到公共目录</string>
+    <string name="no_app">没有可打开此文件的应用</string>
+    <string name="open_fail">打开失败：%1$s</string>
+    <string name="picker_fail">无法打开位置选择器：%1$s</string>
+    <string name="confirm_delete_local">确定删除《%1$s》吗？此操作不可恢复。</string>
+    <string name="export_done_title">已导出</string>
+    <string name="export_done_msg">文件已保存到你选择的位置。\n是否删除 App 内的副本？</string>
+    <string name="delete_copy">删除副本</string>
+    <string name="keep">保留</string>
+    <string name="export_fail">导出失败</string>
+    <string name="fm_unsupported_title">文件管理器不支持</string>
+    <string name="fm_unsupported_msg">部分手机（华为、小米、OPPO）的文件管理器限制了应用专属目录的访问。\n\n建议使用「分享」功能把文件发到微信/QQ，或从文件管理器手动导航到：\n\n%1$s</string>
+    <string name="copy_path">复制路径</string>
+    <string name="no_downloads_toast">还没有下载文件</string>
+    <string name="share_link_fail">无法生成分享链接</string>
+    <string name="share_title">分享下载的文件</string>
+    <string name="html_downloads_title">已下载 %1$d 个文件</string>
+    <string name="html_col_name">文件名</string>
+    <string name="html_col_size">大小</string>
+    <string name="html_title">已下载文件</string>
+    <string name="path_copied_text">LanTransfer 下载路径：%1$s</string>
+    <string name="path_copied">路径已复制</string>
+</resources>

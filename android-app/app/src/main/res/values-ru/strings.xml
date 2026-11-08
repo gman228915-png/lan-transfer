@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Передача по LAN</string>
+
+    <string name="connect_title">Подключение к серверу</string>
+    <string name="btn_background">Фон</string>
+    <string name="hint_url">https://ip-пк:8765</string>
+    <string name="hint_token">Код доступа (часть после ?k=)</string>
+    <string name="btn_connect">Подключиться</string>
+    <string name="btn_upload">Отправить файлы</string>
+    <string name="btn_scan">Сканировать</string>
+    <string name="btn_scanning">Сканирование…</string>
+    <string name="btn_qrscan">QR-скан</string>
+    <string name="btn_downloads">Загрузки</string>
+    <string name="status_disconnected">Нет подключения</string>
+    <string name="status_not_connected">Нет подключения · сканируйте QR или введите адрес и нажмите «Подключиться»</string>
+    <string name="status_reconnecting">Повторное подключение к прежнему ПК…</string>
+    <string name="status_connecting">Подключение…</string>
+    <string name="status_connected">Подключено ✓</string>
+    <string name="status_failed">Ошибка подключения</string>
+    <string name="empty_files">Файлов пока нет. Нажмите «Отправить файлы» выше, чтобы добавить.</string>
+    <string name="bg_custom_desc">Свой фон</string>
+
+    <string name="space_all">Все пространства</string>
+    <string name="space_ro_suffix"> (только чтение)</string>
+    <string name="space_readonly_toast">Пространство «%1$s» только для чтения — доступно лишь скачивание</string>
+    <string name="files_info">Пространство: %1$s · файлов: %2$d</string>
+
+    <string name="dlg_appearance_title">Оформление · Фон</string>
+    <string name="dlg_pick_bg">Выбрать фоновое изображение</string>
+    <string name="dlg_reset_bg">Вернуть фон по умолчанию</string>
+    <string name="dlg_language">Язык</string>
+    <string name="language_follow_system">Как в системе</string>
+    <string name="toast_bg_updated">Фон обновлён</string>
+    <string name="toast_bg_reset">Фон по умолчанию восстановлен</string>
+    <string name="toast_bg_invalid">Фоновое изображение недоступно. Выберите другое.</string>
+
+    <string name="discover_scanning">Сканирование локальной сети…</string>
+    <string name="discover_scanning_auto">Автоматическое сканирование локальной сети…</string>
+    <string name="device_none">Устройства не найдены (используйте QR или введите адрес вручную)</string>
+    <string name="discover_found_hint">Найдено устройств: %1$d. Выберите одно и подключитесь.</string>
+    <string name="discover_found_toast">Найдено устройств: %1$d. Выберите одно и нажмите «Подключиться».</string>
+    <string name="discover_empty_auto">Устройства не найдены: нажмите «Сканировать» ещё раз или используйте QR / ручной адрес</string>
+    <string name="discover_empty_manual">Устройства не найдены: проверьте, что приложение на ПК запущено и оба устройства в одной сети Wi-Fi</string>
+    <string name="discover_empty_toast">Устройства не найдены. Проверьте одну и ту же Wi-Fi или используйте QR.</string>
+
+    <string name="scan_prompt">Сканируйте QR-код на компьютере</string>
+    <string name="scan_bad_qr">Не удалось распознать QR-код</string>
+    <string name="scan_no_token">В QR-коде нет кода доступа. Введите код, показанный на компьютере.</string>
+    <string name="scan_ok">Распознано: %1$s</string>
+
+    <string name="busy">Идёт передача, подождите немного</string>
+    <string name="err_network">Ошибка сети</string>
+    <string name="err_no_server">Сначала подключитесь к серверу</string>
+    <string name="err_need_url">Введите адрес компьютера, например https://192.168.1.10:8765</string>
+    <string name="err_need_token">Введите код доступа (он показан в окне на компьютере)</string>
+    <string name="err_connect">Не удаётся подключиться к серверу</string>
+    <string name="pin_title">Отпечаток сертификата изменился</string>
+    <string name="pin_clear_reconnect">Сбросить и подключиться снова</string>
+    <string name="cancel">Отмена</string>
+    <string name="close">Закрыть</string>
+    <string name="delete">Удалить</string>
+    <string name="delete_title">Удалить</string>
+    <string name="deleted">Удалено</string>
+    <string name="confirm_delete">Удалить «%1$s»?</string>
+    <string name="delete_fail">Ошибка удаления</string>
+    <string name="retry">Повторить</string>
+    <string name="dlg_error">Операция не удалась</string>
+    <string name="back">Назад</string>
+
+    <string name="pick_files_title">Выберите файлы (можно несколько)</string>
+    <string name="uploading_name">Отправка: %1$s</string>
+    <string name="upload_progress">Отправка %1$d/%2$d</string>
+    <string name="upload_done">Отправка завершена ✓</string>
+    <string name="upload_done_toast">Отправлено файлов: %1$d</string>
+    <string name="upload_partial">Ошибок: %1$d из %2$d</string>
+    <string name="upload_fail_msg">Ошибка отправки: %1$s\n\nУспешно %2$d из %3$d</string>
+
+    <string name="download">Скачать</string>
+    <string name="downloading_name">Скачивание: %1$s</string>
+    <string name="downloading_label">Скачать %1$s</string>
+    <string name="download_saved">Сохранено в: %1$s</string>
+    <string name="download_done">Скачивание завершено ✓</string>
+    <string name="download_fail">Ошибка скачивания</string>
+    <string name="download_fail_msg">Не удалось скачать. Проверьте подключение Wi-Fi.</string>
+    <string name="eta"> · осталось %1$d с</string>
+    <string name="unnamed_file">файл-без-имени</string>
+
+    <string name="downloads_title">Скачанные файлы</string>
+    <string name="downloads_empty">Скачанных файлов пока нет.</string>
+    <string name="downloads_count">Скачано файлов: %1$d (нажмите для управления)</string>
+    <string name="share_all">Отправить все</string>
+    <string name="open">Открыть</string>
+    <string name="share">Поделиться</string>
+    <string name="move_save">Переместить / сохранить в общую папку</string>
+    <string name="no_app">Нет приложения, способного открыть этот файл</string>
+    <string name="open_fail">Не удалось открыть: %1$s</string>
+    <string name="picker_fail">Не удалось открыть выбор места: %1$s</string>
+    <string name="confirm_delete_local">Удалить «%1$s»? Это действие нельзя отменить.</string>
+    <string name="export_done_title">Экспорт завершён</string>
+    <string name="export_done_msg">Файл сохранён в выбранное место.\nУдалить копию внутри приложения?</string>
+    <string name="delete_copy">Удалить копию</string>
+    <string name="keep">Оставить</string>
+    <string name="export_fail">Ошибка экспорта</string>
+    <string name="fm_unsupported_title">Файловый менеджер не поддерживается</string>
+    <string name="fm_unsupported_msg">На некоторых телефонах (Huawei, Xiaomi, OPPO) доступ к приватным папкам приложения ограничен.\n\nИспользуйте «Поделиться», чтобы отправить в WeChat/QQ, или откройте путь вручную в файловом менеджере:\n\n%1$s</string>
+    <string name="copy_path">Копировать путь</string>
+    <string name="no_downloads_toast">Скачанных файлов пока нет</string>
+    <string name="share_link_fail">Не удалось создать ссылку для отправки</string>
+    <string name="share_title">Отправить скачанные файлы</string>
+    <string name="html_downloads_title">Скачано файлов: %1$d</string>
+    <string name="html_col_name">Имя файла</string>
+    <string name="html_col_size">Размер</string>
+    <string name="html_title">Скачанные файлы</string>
+    <string name="path_copied_text">Путь загрузки LanTransfer: %1$s</string>
+    <string name="path_copied">Путь скопирован</string>
+</resources>

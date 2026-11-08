@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LAN ファイル転送</string>
+
+    <string name="connect_title">サーバーに接続</string>
+    <string name="btn_background">背景</string>
+    <string name="hint_url">https://PCのIP:8765</string>
+    <string name="hint_token">アクセスコード（?k= の後ろの部分）</string>
+    <string name="btn_connect">接続</string>
+    <string name="btn_upload">ファイルを送信</string>
+    <string name="btn_scan">スキャン</string>
+    <string name="btn_scanning">スキャン中…</string>
+    <string name="btn_qrscan">QR スキャン</string>
+    <string name="btn_downloads">保存済み</string>
+    <string name="status_disconnected">未接続</string>
+    <string name="status_not_connected">未接続 · QR をスキャンするかアドレスを入力して接続を押してください</string>
+    <string name="status_reconnecting">前回の PC に再接続中…</string>
+    <string name="status_connecting">接続中…</string>
+    <string name="status_connected">接続済み ✓</string>
+    <string name="status_failed">接続に失敗しました</string>
+    <string name="empty_files">ファイルがありません。上の「ファイルを送信」から追加してください。</string>
+    <string name="bg_custom_desc">カスタム背景</string>
+
+    <string name="space_all">すべてのスペース</string>
+    <string name="space_ro_suffix">（読み取り専用）</string>
+    <string name="space_readonly_toast">スペース「%1$s」は読み取り専用です。ダウンロードのみ可能です</string>
+    <string name="files_info">スペース：%1$s · 全 %2$d ファイル</string>
+
+    <string name="dlg_appearance_title">外観 · 背景</string>
+    <string name="dlg_pick_bg">背景画像を選択</string>
+    <string name="dlg_reset_bg">既定の背景に戻す</string>
+    <string name="dlg_language">言語</string>
+    <string name="language_follow_system">システムに従う</string>
+    <string name="toast_bg_updated">背景を更新しました</string>
+    <string name="toast_bg_reset">既定の背景に戻しました</string>
+    <string name="toast_bg_invalid">背景画像が無効になりました。もう一度選択してください</string>
+
+    <string name="discover_scanning">ローカルネットワークをスキャン中…</string>
+    <string name="discover_scanning_auto">ローカルネットワークを自動スキャン中…</string>
+    <string name="device_none">デバイスが見つかりません（QR または手入力）</string>
+    <string name="discover_found_hint">%1$d 台見つかりました。選択して接続してください</string>
+    <string name="discover_found_toast">%1$d 台見つかりました。選択して接続を押してください</string>
+    <string name="discover_empty_auto">デバイスが見つかりません：スキャンを再試行するか、QR／手入力を使ってください</string>
+    <string name="discover_empty_manual">デバイスが見つかりません：PC 側が起動していること、同じ Wi-Fi に接続していることを確認してください</string>
+    <string name="discover_empty_toast">デバイスが見つかりません。同じ Wi-Fi か QR スキャンを確認してください</string>
+
+    <string name="scan_prompt">PC 側の QR コードをスキャン</string>
+    <string name="scan_bad_qr">QR コードの内容を読み取れません</string>
+    <string name="scan_no_token">QR コードにコードがありません。PC 画面に表示されたコードを入力してください</string>
+    <string name="scan_ok">読み取りました：%1$s</string>
+
+    <string name="busy">転送中です。しばらくお待ちください</string>
+    <string name="err_network">ネットワークエラー</string>
+    <string name="err_no_server">先にサーバーへ接続してください</string>
+    <string name="err_need_url">PC のアドレスを入力してください（例：https://192.168.1.10:8765）</string>
+    <string name="err_need_token">コードを入力してください（PC の画面に表示されています）</string>
+    <string name="err_connect">サーバーに接続できません</string>
+    <string name="pin_title">証明書の指紋が変わりました</string>
+    <string name="pin_clear_reconnect">クリアして再接続</string>
+    <string name="cancel">キャンセル</string>
+    <string name="close">閉じる</string>
+    <string name="delete">削除</string>
+    <string name="delete_title">削除</string>
+    <string name="deleted">削除しました</string>
+    <string name="confirm_delete">「%1$s」を削除しますか？</string>
+    <string name="delete_fail">削除に失敗しました</string>
+    <string name="retry">再試行</string>
+    <string name="dlg_error">操作に失敗しました</string>
+    <string name="back">戻る</string>
+
+    <string name="pick_files_title">ファイルを選択（複数可）</string>
+    <string name="uploading_name">送信中：%1$s</string>
+    <string name="upload_progress">送信中 %1$d/%2$d</string>
+    <string name="upload_done">送信完了 ✓</string>
+    <string name="upload_done_toast">%1$d 件のファイルを送信しました</string>
+    <string name="upload_partial">失敗 %1$d/%2$d 件</string>
+    <string name="upload_fail_msg">送信に失敗しました：%1$s\n\n成功 %2$d / %3$d 件</string>
+
+    <string name="download">ダウンロード</string>
+    <string name="downloading_name">ダウンロード：%1$s</string>
+    <string name="downloading_label">%1$s をダウンロード</string>
+    <string name="download_saved">保存先：%1$s</string>
+    <string name="download_done">ダウンロード完了 ✓</string>
+    <string name="download_fail">ダウンロードに失敗しました</string>
+    <string name="download_fail_msg">ダウンロードに失敗しました。Wi-Fi を確認してください</string>
+    <string name="eta"> · 残り %1$d 秒</string>
+    <string name="unnamed_file">名称未設定</string>
+
+    <string name="downloads_title">ダウンロード済みファイル</string>
+    <string name="downloads_empty">ダウンロードしたファイルはまだありません。</string>
+    <string name="downloads_count">%1$d 件のダウンロード済みファイル（タップで管理）</string>
+    <string name="share_all">すべて共有</string>
+    <string name="open">開く</string>
+    <string name="share">共有</string>
+    <string name="move_save">公開フォルダーへ移動／保存</string>
+    <string name="no_app">このファイルを開けるアプリがありません</string>
+    <string name="open_fail">開けませんでした：%1$s</string>
+    <string name="picker_fail">場所の選択画面を開けませんでした：%1$s</string>
+    <string name="confirm_delete_local">「%1$s」を削除しますか？この操作は元に戻せません。</string>
+    <string name="export_done_title">エクスポート完了</string>
+    <string name="export_done_msg">選択した場所に保存しました。\nアプリ内のコピーを削除しますか？</string>
+    <string name="delete_copy">コピーを削除</string>
+    <string name="keep">保持</string>
+    <string name="export_fail">エクスポートに失敗しました</string>
+    <string name="fm_unsupported_title">ファイルマネージャー非対応</string>
+    <string name="fm_unsupported_msg">一部の端末（Huawei、Xiaomi、OPPO）ではアプリ専用フォルダーへのアクセスが制限されています。\n\n「共有」で WeChat/QQ に送るか、ファイルマネージャーで次のパスを開いてください：\n\n%1$s</string>
+    <string name="copy_path">パスをコピー</string>
+    <string name="no_downloads_toast">ダウンロードしたファイルはまだありません</string>
+    <string name="share_link_fail">共有リンクを作成できませんでした</string>
+    <string name="share_title">ダウンロードしたファイルを共有</string>
+    <string name="html_downloads_title">%1$d 件のダウンロード済みファイル</string>
+    <string name="html_col_name">ファイル名</string>
+    <string name="html_col_size">サイズ</string>
+    <string name="html_title">ダウンロード済みファイル</string>
+    <string name="path_copied_text">LanTransfer の保存先：%1$s</string>
+    <string name="path_copied">パスをコピーしました</string>
+</resources>

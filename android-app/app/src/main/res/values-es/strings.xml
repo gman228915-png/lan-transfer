@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Transferencia LAN</string>
+
+    <string name="connect_title">Conectar al servidor</string>
+    <string name="btn_background">Fondo</string>
+    <string name="hint_url">https://ip-del-pc:8765</string>
+    <string name="hint_token">Código de acceso (la parte tras ?k=)</string>
+    <string name="btn_connect">Conectar</string>
+    <string name="btn_upload">Enviar archivos</string>
+    <string name="btn_scan">Escanear</string>
+    <string name="btn_scanning">Escaneando…</string>
+    <string name="btn_qrscan">Escanear QR</string>
+    <string name="btn_downloads">Descargas</string>
+    <string name="status_disconnected">Sin conexión</string>
+    <string name="status_not_connected">Sin conexión · escanea el QR o introduce la dirección y pulsa Conectar</string>
+    <string name="status_reconnecting">Reconectando al último ordenador…</string>
+    <string name="status_connecting">Conectando…</string>
+    <string name="status_connected">Conectado ✓</string>
+    <string name="status_failed">Error de conexión</string>
+    <string name="empty_files">Aún no hay archivos. Pulsa «Enviar archivos» arriba para añadir.</string>
+    <string name="bg_custom_desc">Fondo personalizado</string>
+
+    <string name="space_all">Todos los espacios</string>
+    <string name="space_ro_suffix"> (solo lectura)</string>
+    <string name="space_readonly_toast">El espacio «%1$s» es de solo lectura; solo puedes descargar</string>
+    <string name="files_info">Espacio: %1$s · %2$d archivos</string>
+
+    <string name="dlg_appearance_title">Apariencia · Fondo</string>
+    <string name="dlg_pick_bg">Elegir imagen de fondo</string>
+    <string name="dlg_reset_bg">Restaurar fondo predeterminado</string>
+    <string name="dlg_language">Idioma</string>
+    <string name="language_follow_system">Seguir el sistema</string>
+    <string name="toast_bg_updated">Fondo actualizado</string>
+    <string name="toast_bg_reset">Fondo predeterminado restaurado</string>
+    <string name="toast_bg_invalid">La imagen de fondo ya no está disponible. Elige otra.</string>
+
+    <string name="discover_scanning">Escaneando la red local…</string>
+    <string name="discover_scanning_auto">Escaneando la red local automáticamente…</string>
+    <string name="device_none">No se encontraron dispositivos (usa el QR o introduce la dirección)</string>
+    <string name="discover_found_hint">Se encontraron %1$d dispositivos. Elige uno y conecta.</string>
+    <string name="discover_found_toast">Se encontraron %1$d dispositivos. Elige uno y pulsa Conectar.</string>
+    <string name="discover_empty_auto">No se encontraron dispositivos: pulsa Escanear de nuevo o usa el QR / la dirección manual</string>
+    <string name="discover_empty_manual">No se encontraron dispositivos: comprueba que la app del PC esté abierta y que ambos estén en la misma Wi-Fi</string>
+    <string name="discover_empty_toast">No se encontraron dispositivos. Comprueba la misma Wi-Fi o usa el QR.</string>
+
+    <string name="scan_prompt">Escanea el código QR del ordenador</string>
+    <string name="scan_bad_qr">No se pudo leer el código QR</string>
+    <string name="scan_no_token">El QR no trae código. Introduce el código que muestra el ordenador.</string>
+    <string name="scan_ok">Detectado: %1$s</string>
+
+    <string name="busy">Transferencia en curso, espera un momento</string>
+    <string name="err_network">Error de red</string>
+    <string name="err_no_server">Conecta primero al servidor</string>
+    <string name="err_need_url">Introduce la dirección del ordenador, p. ej. https://192.168.1.10:8765</string>
+    <string name="err_need_token">Introduce el código (se muestra en la ventana del ordenador)</string>
+    <string name="err_connect">No se puede conectar al servidor</string>
+    <string name="pin_title">La huella del certificado cambió</string>
+    <string name="pin_clear_reconnect">Borrar y reconectar</string>
+    <string name="cancel">Cancelar</string>
+    <string name="close">Cerrar</string>
+    <string name="delete">Eliminar</string>
+    <string name="delete_title">Eliminar</string>
+    <string name="deleted">Eliminado</string>
+    <string name="confirm_delete">¿Eliminar «%1$s»?</string>
+    <string name="delete_fail">Error al eliminar</string>
+    <string name="retry">Reintentar</string>
+    <string name="dlg_error">La operación falló</string>
+    <string name="back">Volver</string>
+
+    <string name="pick_files_title">Elegir archivos (se permite varios)</string>
+    <string name="uploading_name">Subiendo: %1$s</string>
+    <string name="upload_progress">Subiendo %1$d/%2$d</string>
+    <string name="upload_done">Subida completada ✓</string>
+    <string name="upload_done_toast">Se enviaron %1$d archivos</string>
+    <string name="upload_partial">Fallaron %1$d/%2$d</string>
+    <string name="upload_fail_msg">Error al subir: %1$s\n\nCorrectos %2$d / %3$d</string>
+
+    <string name="download">Descargar</string>
+    <string name="downloading_name">Descargando: %1$s</string>
+    <string name="downloading_label">Descargar %1$s</string>
+    <string name="download_saved">Guardado en: %1$s</string>
+    <string name="download_done">Descarga completada ✓</string>
+    <string name="download_fail">Error de descarga</string>
+    <string name="download_fail_msg">La descarga falló. Comprueba la conexión Wi-Fi.</string>
+    <string name="eta"> · quedan %1$d s</string>
+    <string name="unnamed_file">archivo-sin-nombre</string>
+
+    <string name="downloads_title">Archivos descargados</string>
+    <string name="downloads_empty">Aún no hay archivos descargados.</string>
+    <string name="downloads_count">%1$d archivos descargados (toca para gestionar)</string>
+    <string name="share_all">Compartir todos</string>
+    <string name="open">Abrir</string>
+    <string name="share">Compartir</string>
+    <string name="move_save">Mover / guardar en una carpeta pública</string>
+    <string name="no_app">Ninguna app puede abrir este archivo</string>
+    <string name="open_fail">No se pudo abrir: %1$s</string>
+    <string name="picker_fail">No se pudo abrir el selector de ubicación: %1$s</string>
+    <string name="confirm_delete_local">¿Eliminar «%1$s»? Esta acción no se puede deshacer.</string>
+    <string name="export_done_title">Exportación completada</string>
+    <string name="export_done_msg">El archivo se guardó en la ubicación elegida.\n¿Eliminar la copia dentro de la app?</string>
+    <string name="delete_copy">Eliminar copia</string>
+    <string name="keep">Conservar</string>
+    <string name="export_fail">Error al exportar</string>
+    <string name="fm_unsupported_title">Administrador de archivos no compatible</string>
+    <string name="fm_unsupported_msg">Algunos móviles (Huawei, Xiaomi, OPPO) restringen el acceso a las carpetas privadas de la app.\n\nUsa Compartir para enviarlo a WeChat/QQ, o abre la ruta manualmente en un administrador de archivos:\n\n%1$s</string>
+    <string name="copy_path">Copiar ruta</string>
+    <string name="no_downloads_toast">Aún no hay archivos descargados</string>
+    <string name="share_link_fail">No se pudo crear el enlace para compartir</string>
+    <string name="share_title">Compartir archivos descargados</string>
+    <string name="html_downloads_title">%1$d archivos descargados</string>
+    <string name="html_col_name">Nombre</string>
+    <string name="html_col_size">Tamaño</string>
+    <string name="html_title">Archivos descargados</string>
+    <string name="path_copied_text">Ruta de descarga de LanTransfer: %1$s</string>
+    <string name="path_copied">Ruta copiada</string>
+</resources>

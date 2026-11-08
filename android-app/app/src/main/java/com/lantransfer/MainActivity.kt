@@ -19,6 +19,8 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.zxing.integration.android.IntentIntegrator
@@ -51,7 +53,7 @@ class MainActivity : AppCompatActivity() {
             }
             appearancePrefs.edit().putString("bg_uri", uri.toString()).apply()
             applyBackground()
-            Toast.makeText(this, "背景已更新", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.toast_bg_updated), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -65,7 +67,7 @@ class MainActivity : AppCompatActivity() {
     private var currentSpace = ""
     private var currentSpaceReadOnly = false
     private var spaceList: List<SpaceInfo> = emptyList()
-    private val spaceNames = mutableListOf("全部空间")
+    private val spaceNames = mutableListOf(getString(R.string.space_all))
     private lateinit var spaceAdapter: ArrayAdapter<String>
 
     /** 局域网 UDP 自动发现的设备 */
@@ -152,10 +154,10 @@ class MainActivity : AppCompatActivity() {
         if (savedUrl.isNotEmpty()) binding.etUrl.setText(savedUrl)
         if (savedToken.isNotEmpty()) binding.etToken.setText(savedToken)
         if (savedUrl.isNotEmpty() && savedToken.isNotEmpty()) {
-            binding.tvStatus.text = "正在连接上次的电脑…"
+            binding.tvStatus.text = getString(R.string.status_reconnecting)
             connect()
         } else {
-            binding.tvStatus.text = "未连接 · 扫码或输入地址后点连接"
+            binding.tvStatus.text = getString(R.string.status_not_connected)
         }
 
         // 没有历史地址时，连上 Wi-Fi 后自动扫描局域网设备
@@ -166,19 +168,46 @@ class MainActivity : AppCompatActivity() {
     // 外观：自定义背景（只影响界面，不影响传输）
     // --------------------------------------------------------------------------- #
     private fun showAppearanceDialog() {
-        val items = arrayOf("选择背景图片", "恢复默认背景")
+        val items = arrayOf(getString(R.string.dlg_pick_bg), getString(R.string.dlg_reset_bg), getString(R.string.dlg_language))
         AlertDialog.Builder(this)
-            .setTitle("外观 · 背景")
+            .setTitle(R.string.dlg_appearance_title)
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> pickBackground.launch(arrayOf("image/*"))
                     1 -> {
                         appearancePrefs.edit().remove("bg_uri").apply()
                         applyBackground()
-                        Toast.makeText(this, "已恢复默认背景", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, getString(R.string.toast_bg_reset), Toast.LENGTH_SHORT).show()
                     }
+                    2 -> showLanguageDialog()
                 }
             }
+            .show()
+    }
+
+    /** 手动覆盖语言（AppCompatDelegate 持久化；空标签 = 跟随系统） */
+    private fun showLanguageDialog() {
+        val tags = arrayOf("", "zh-CN", "zh-TW", "en", "ja", "ko", "es", "ru")
+        val labels = arrayOf(
+            getString(R.string.language_follow_system),
+            "简体中文", "繁體中文", "English", "日本語", "한국어", "Español", "Русский"
+        )
+        val current = AppCompatDelegate.getApplicationLocales().toLanguageTags()
+        val checked = tags.indexOfFirst {
+            it.isNotEmpty() && current.lowercase().startsWith(it.lowercase())
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.dlg_language)
+            .setSingleChoiceItems(labels, if (checked >= 0) checked else 0) { dialog, which ->
+                if (tags[which].isEmpty()) {
+                    AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList())
+                } else {
+                    AppCompatDelegate.setApplicationLocales(
+                        LocaleListCompat.forLanguageTags(tags[which]))
+                }
+                dialog.dismiss()
+            }
+            .setNegativeButton(R.string.cancel, null)
             .show()
     }
 
@@ -213,7 +242,7 @@ class MainActivity : AppCompatActivity() {
                     if (!isFinishing && !isDestroyed) {
                         binding.imgBackground.setImageDrawable(null)
                         binding.bgDim.alpha = 0f
-                        Toast.makeText(this, "背景图片已失效，请重新选择",
+                        Toast.makeText(this, getString(R.string.toast_bg_invalid),
                             Toast.LENGTH_SHORT).show()
                     }
                 }
@@ -228,15 +257,15 @@ class MainActivity : AppCompatActivity() {
         if (discovering) return
         discovering = true
         binding.btnDiscover.isEnabled = false
-        binding.btnDiscover.text = "扫描中…"
+        binding.btnDiscover.text = getString(R.string.btn_scanning)
         binding.tvDiscoverHint.text =
-            if (auto) "正在自动扫描局域网设备…" else "正在扫描局域网设备…"
+            if (auto) getString(R.string.discover_scanning_auto) else getString(R.string.discover_scanning)
         scope.launch {
             val list = discovery.scan(if (auto) 5000L else 4000L)
             withContext(Dispatchers.Main) {
                 discovering = false
                 binding.btnDiscover.isEnabled = true
-                binding.btnDiscover.text = "🔍 扫描"
+                binding.btnDiscover.text = getString(R.string.btn_scan)
                 applyDevices(list, auto)
             }
         }
@@ -247,7 +276,7 @@ class MainActivity : AppCompatActivity() {
         deviceList.addAll(list)
         deviceNames.clear()
         if (list.isEmpty()) {
-            deviceNames.add("未发现设备（可扫码或手输）")
+            deviceNames.add(getString(R.string.device_none))
         } else {
             for (item in list) {
                 deviceNames.add("${item.ip}:${item.port}  v${item.version.ifEmpty { "?" }}")
@@ -258,19 +287,19 @@ class MainActivity : AppCompatActivity() {
         if (list.isNotEmpty()) {
             binding.spDevices.setSelection(0)
             binding.etUrl.setText(list[0].server)
-            binding.tvDiscoverHint.text = "发现 ${list.size} 台设备，点选后连接"
+            binding.tvDiscoverHint.text = getString(R.string.discover_found_hint, list.size)
             if (auto) {
-                Toast.makeText(this, "发现 ${list.size} 台设备，选中后点连接",
+                Toast.makeText(this, getString(R.string.discover_found_toast, list.size),
                     Toast.LENGTH_SHORT).show()
             }
         } else {
             binding.tvDiscoverHint.text = if (auto) {
-                "未发现设备：可点扫描重试，或扫码/手输地址"
+                getString(R.string.discover_empty_auto)
             } else {
-                "未发现设备：请确认电脑端已启动、手机与电脑在同一 Wi-Fi"
+                getString(R.string.discover_empty_manual)
             }
             if (!auto) {
-                Toast.makeText(this, "未发现设备，请检查同一 Wi-Fi 或改用扫码",
+                Toast.makeText(this, getString(R.string.discover_empty_toast),
                     Toast.LENGTH_SHORT).show()
             }
         }
@@ -281,7 +310,7 @@ class MainActivity : AppCompatActivity() {
     // --------------------------------------------------------------------------- #
     private fun scan() {
         IntentIntegrator(this)
-            .setPrompt("扫描电脑端二维码")
+            .setPrompt(getString(R.string.scan_prompt))
             .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
             .setOrientationLocked(false)
             .initiateScan()
@@ -302,7 +331,7 @@ class MainActivity : AppCompatActivity() {
         val uri = Uri.parse(text)
         val host = uri.host
         if (host.isNullOrBlank()) {
-            Toast.makeText(this, "无法识别二维码内容", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.scan_bad_qr), Toast.LENGTH_SHORT).show()
             return
         }
         val scheme = if (uri.scheme?.lowercase() == "http") "http" else "https"
@@ -312,10 +341,10 @@ class MainActivity : AppCompatActivity() {
         binding.etUrl.setText(base)
         binding.etToken.setText(token)
         if (token.isEmpty()) {
-            Toast.makeText(this, "二维码里没有口令，请输入电脑端显示的口令", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.scan_no_token), Toast.LENGTH_LONG).show()
             return
         }
-        Toast.makeText(this, "已识别：$base", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.scan_ok, base), Toast.LENGTH_SHORT).show()
         connect()
     }
 
@@ -324,14 +353,14 @@ class MainActivity : AppCompatActivity() {
     // --------------------------------------------------------------------------- #
     private fun connect() {
         if (opRunning) {
-            Toast.makeText(this, "正在传输，请稍候", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.busy), Toast.LENGTH_SHORT).show()
             return
         }
         val url = binding.etUrl.text.toString().trim().trimEnd('/')
         var token = binding.etToken.text.toString().trim()
 
         if (url.isEmpty()) {
-            Toast.makeText(this, "请输入电脑端地址，如 https://192.168.1.10:8765",
+            Toast.makeText(this, getString(R.string.err_need_url),
                 Toast.LENGTH_SHORT).show()
             return
         }
@@ -344,12 +373,12 @@ class MainActivity : AppCompatActivity() {
             binding.etToken.setText(token)
         }
         if (token.isEmpty()) {
-            Toast.makeText(this, "请输入口令（电脑端窗口里能看到）", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.err_need_token), Toast.LENGTH_SHORT).show()
             return
         }
 
         val api = ApiClient(url, token, this)
-        binding.tvStatus.text = "连接中…"
+        binding.tvStatus.text = getString(R.string.status_connecting)
 
         scope.launch {
             val ok = api.testConnection()
@@ -358,26 +387,26 @@ class MainActivity : AppCompatActivity() {
                     this@MainActivity.api = api
                     getSharedPreferences("lantransfer", MODE_PRIVATE)
                         .edit().putString("url", url).putString("token", token).apply()
-                    binding.tvStatus.text = "已连接 ✓"
+                    binding.tvStatus.text = getString(R.string.status_connected)
                     currentSpace = ""
                     currentSpaceReadOnly = false
                     spaceList = emptyList()
                     spaceNames.clear()
-                    spaceNames.add("全部空间")
+                    spaceNames.add(getString(R.string.space_all))
                     spaceAdapter.notifyDataSetChanged()
                     loadSpaces()
                 } else {
-                    val msg = api.lastError ?: "无法连接到服务器"
-                    binding.tvStatus.text = "连接失败"
+                    val msg = api.lastError ?: getString(R.string.err_connect)
+                    binding.tvStatus.text = getString(R.string.status_failed)
                     if (api.pinMismatch) {
                         AlertDialog.Builder(this@MainActivity)
-                            .setTitle("证书指纹变化")
+                            .setTitle(R.string.pin_title)
                             .setMessage(msg)
-                            .setPositiveButton("清除并重连") { _, _ ->
+                            .setPositiveButton(R.string.pin_clear_reconnect) { _, _ ->
                                 api.resetPin()
                                 connect()
                             }
-                            .setNegativeButton("取消", null)
+                            .setNegativeButton(getString(R.string.cancel), null)
                             .show()
                     } else {
                         Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
@@ -401,9 +430,9 @@ class MainActivity : AppCompatActivity() {
     private fun applySpaces(spaces: List<SpaceInfo>) {
         spaceList = spaces
         spaceNames.clear()
-        spaceNames.add("全部空间")
+        spaceNames.add(getString(R.string.space_all))
         for (space in spaces) {
-            spaceNames.add(if (space.mode == "ro") "${space.name}（只读）" else space.name)
+            spaceNames.add(if (space.mode == "ro") "${space.name}${getString(R.string.space_ro_suffix)}" else space.name)
         }
         spaceAdapter.notifyDataSetChanged()
         val index = spaces.indexOfFirst { it.name == currentSpace }
@@ -426,7 +455,7 @@ class MainActivity : AppCompatActivity() {
         }
         binding.btnUpload.isEnabled = !currentSpaceReadOnly && !opRunning
         if (fromUser && currentSpaceReadOnly) {
-            Toast.makeText(this, "空间「$currentSpace」为只读，只能下载", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.space_readonly_toast, currentSpace), Toast.LENGTH_SHORT).show()
         }
         if (api != null) refreshFiles()
     }
@@ -438,7 +467,7 @@ class MainActivity : AppCompatActivity() {
             val list = api.listFiles(space.ifEmpty { null })
             withContext(Dispatchers.Main) {
                 adapter.update(list)
-                binding.tvInfo.text = "空间：${space.ifEmpty { "全部空间" }} · 共 ${list.size} 个文件"
+                binding.tvInfo.text = getString(R.string.files_info, space.ifEmpty { getString(R.string.space_all) }, list.size)
                 binding.tvEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
                 if (list.isEmpty() && api.lastError != null) {
                     binding.tvStatus.text = api.lastError
@@ -452,15 +481,15 @@ class MainActivity : AppCompatActivity() {
     // --------------------------------------------------------------------------- #
     private fun pickFile() {
         api ?: run {
-            Toast.makeText(this, "请先连接服务器", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.err_no_server), Toast.LENGTH_SHORT).show()
             return
         }
         if (opRunning) {
-            Toast.makeText(this, "正在传输，请稍候", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.busy), Toast.LENGTH_SHORT).show()
             return
         }
         if (currentSpaceReadOnly) {
-            Toast.makeText(this, "当前空间「$currentSpace」为只读，只能下载",
+            Toast.makeText(this, getString(R.string.space_readonly_toast, currentSpace),
                 Toast.LENGTH_SHORT).show()
             return
         }
@@ -469,18 +498,18 @@ class MainActivity : AppCompatActivity() {
             addCategory(Intent.CATEGORY_OPENABLE)
             putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
         }
-        pickLauncher.launch(Intent.createChooser(intent, "选择文件（可多选）"))
+        pickLauncher.launch(Intent.createChooser(intent, getString(R.string.pick_files_title)))
     }
 
     private data class UploadItem(val uri: Uri, val name: String, val size: Long)
 
     private fun uploadUris(uris: List<Uri>) {
         val api = api ?: run {
-            Toast.makeText(this, "请先连接服务器", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.err_no_server), Toast.LENGTH_SHORT).show()
             return
         }
         if (opRunning) {
-            Toast.makeText(this, "正在传输，请稍候", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.busy), Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -510,7 +539,7 @@ class MainActivity : AppCompatActivity() {
                             return@async
                         }
                         withContext(Dispatchers.Main) {
-                            binding.tvStatus.text = "上传：${item.name}"
+                            binding.tvStatus.text = getString(R.string.uploading_name, item.name)
                         }
                         var last = 0L
                         var ok = false
@@ -520,7 +549,7 @@ class MainActivity : AppCompatActivity() {
                                     val delta = done - last
                                     last = done
                                     updateProgress(sent.addAndGet(delta), totalBytes,
-                                        "上传 ${uploaded}/${items.size}")
+                                        getString(R.string.upload_progress, uploaded, items.size))
                                 }
                             }
                         } catch (e: Exception) {
@@ -539,16 +568,16 @@ class MainActivity : AppCompatActivity() {
                     binding.progressBar.progress
                 }
                 if (failed.isEmpty()) {
-                    binding.tvStatus.text = "上传完成 ✓"
+                    binding.tvStatus.text = getString(R.string.upload_done)
                     Toast.makeText(this@MainActivity,
-                        "已上传 ${items.size} 个文件", Toast.LENGTH_SHORT).show()
+                        getString(R.string.upload_done_toast, items.size), Toast.LENGTH_SHORT).show()
                     refreshFiles()
                     hideProgressLater()
                 } else {
-                    val msg = api.lastError ?: "网络异常"
-                    binding.tvStatus.text = "失败 ${failed.size}/${items.size} 个"
+                    val msg = api.lastError ?: getString(R.string.err_network)
+                    binding.tvStatus.text = getString(R.string.upload_partial, failed.size, items.size)
                     showProgress(false)
-                    askRetry("上传失败：$msg\n\n已成功 ${items.size - failed.size} / ${items.size} 个") {
+                    askRetry(getString(R.string.upload_fail_msg, msg, items.size - failed.size, items.size)) {
                         uploadUris(failed.toList())
                     }
                 }
@@ -561,24 +590,24 @@ class MainActivity : AppCompatActivity() {
     // --------------------------------------------------------------------------- #
     private fun confirmDelete(f: FileItem) {
         AlertDialog.Builder(this)
-            .setTitle("删除")
-            .setMessage("确定删除《${f.name}》吗？")
-            .setPositiveButton("删除") { _, _ ->
+            .setTitle(getString(R.string.delete))
+            .setMessage(getString(R.string.confirm_delete, f.name))
+            .setPositiveButton(getString(R.string.delete)) { _, _ ->
                 val api = api ?: return@setPositiveButton
                 scope.launch {
                     val ok = api.deleteFile(f.name, f.space.takeIf { it.isNotEmpty() })
                     withContext(Dispatchers.Main) {
                         if (ok) {
-                            Toast.makeText(this@MainActivity, "已删除", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this@MainActivity, getString(R.string.deleted), Toast.LENGTH_SHORT).show()
                             refreshFiles()
                         } else {
                             Toast.makeText(this@MainActivity,
-                                api.lastError ?: "删除失败", Toast.LENGTH_SHORT).show()
+                                api.lastError ?: getString(R.string.delete_fail), Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(getString(R.string.cancel), null)
             .show()
     }
 
@@ -588,7 +617,7 @@ class MainActivity : AppCompatActivity() {
     private fun downloadFile(f: FileItem, destOverride: File? = null) {
         val api = api ?: return
         if (opRunning) {
-            Toast.makeText(this, "正在传输，请稍候", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.busy), Toast.LENGTH_SHORT).show()
             return
         }
         downloadDir.mkdirs()
@@ -601,25 +630,25 @@ class MainActivity : AppCompatActivity() {
                 opRunning = true
                 resetRate()
                 showProgress(true)
-                binding.tvStatus.text = "下载：${f.name}"
+                binding.tvStatus.text = getString(R.string.downloading_name, f.name)
             }
 
             val ok = api.downloadFile(f.name, dest,
                 space.takeIf { it.isNotEmpty() }) { done, total ->
-                updateProgress(done, total, "下载 ${f.name}")
+                updateProgress(done, total, getString(R.string.downloading_label, f.name))
             }
 
             withContext(Dispatchers.Main) {
                 opRunning = false
                 if (ok) {
-                    binding.tvStatus.text = "已下载到：${downloadDir.name}/${dest.name}"
+                    binding.tvStatus.text = getString(R.string.download_saved, "${downloadDir.name}/${dest.name}")
                     binding.progressBar.progress = 100
-                    Toast.makeText(this@MainActivity, "下载完成 ✓", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, getString(R.string.download_done), Toast.LENGTH_SHORT).show()
                     hideProgressLater()
                 } else {
-                    binding.tvStatus.text = "下载失败"
+                    binding.tvStatus.text = getString(R.string.download_fail)
                     showProgress(false)
-                    askRetry(api.lastError ?: "下载失败，请检查 Wi-Fi") {
+                    askRetry(api.lastError ?: getString(R.string.download_fail_msg)) {
                         downloadFile(f, dest)
                     }
                 }
@@ -659,7 +688,7 @@ class MainActivity : AppCompatActivity() {
             val speedText = if (speed > 0) {
                 " · ${FileItem.formatSize(speed.toLong())}/s" +
                     if (total > 0 && done < total) {
-                        " · 剩余 " + ((total - done) / speed).toInt() + "s"
+                        getString(R.string.eta, ((total - done) / speed).toInt())
                     } else ""
             } else ""
             binding.tvStatus.text = "$label  $pct%$sizeText$speedText"
@@ -682,10 +711,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun askRetry(message: String, retry: () -> Unit) {
         AlertDialog.Builder(this)
-            .setTitle("操作失败")
+            .setTitle(R.string.dlg_error)
             .setMessage(message)
-            .setPositiveButton("重试") { _, _ -> retry() }
-            .setNegativeButton("取消", null)
+            .setPositiveButton(R.string.retry) { _, _ -> retry() }
+            .setNegativeButton(getString(R.string.cancel), null)
             .show()
     }
 
@@ -705,7 +734,7 @@ class MainActivity : AppCompatActivity() {
     private fun sanitizeFileName(name: String): String {
         val invalid = Regex("""[\\/:*?"<>|\r\n\t]""")
         val clean = invalid.replace(name, "_").trim().trim('.')
-        return clean.ifBlank { "未命名文件" }
+        return clean.ifBlank { getString(R.string.unnamed_file) }
     }
 
     // --------------------------------------------------------------------------- #
@@ -732,16 +761,16 @@ class MainActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     if (ok) {
                         AlertDialog.Builder(this@MainActivity)
-                            .setTitle("已导出")
-                            .setMessage("文件已保存到你选择的位置。\n是否删除 App 内的副本？")
-                            .setPositiveButton("删除副本") { _, _ ->
+                            .setTitle(R.string.export_done_title)
+                            .setMessage(getString(R.string.export_done_msg))
+                            .setPositiveButton(R.string.delete_copy) { _, _ ->
                                 file.delete()
-                                Toast.makeText(this@MainActivity, "已删除", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(this@MainActivity, getString(R.string.deleted), Toast.LENGTH_SHORT).show()
                             }
-                            .setNegativeButton("保留", null)
+                            .setNegativeButton(R.string.keep, null)
                             .show()
                     } else {
-                        Toast.makeText(this@MainActivity, "导出失败", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, getString(R.string.export_fail), Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -755,25 +784,25 @@ class MainActivity : AppCompatActivity() {
 
         if (files.isEmpty()) {
             AlertDialog.Builder(this)
-                .setTitle("已下载的文件")
-                .setMessage("还没有下载文件。")
-                .setPositiveButton("关闭", null)
+                .setTitle(R.string.downloads_title)
+                .setMessage(R.string.downloads_empty)
+                .setPositiveButton(getString(R.string.close), null)
                 .show()
             return
         }
 
         val names = files.map { "${it.name}  (${FileItem.formatSize(it.length())})" }.toTypedArray()
         AlertDialog.Builder(this)
-            .setTitle("已下载 ${files.size} 个文件（点击管理）")
+            .setTitle(getString(R.string.downloads_count, files.size))
             .setItems(names) { _, idx -> showFileActions(files[idx]) }
-            .setPositiveButton("全部分享") { _, _ -> shareAllFiles(files) }
-            .setNegativeButton("关闭", null)
+            .setPositiveButton(R.string.share_all) { _, _ -> shareAllFiles(files) }
+            .setNegativeButton(getString(R.string.close), null)
             .show()
     }
 
     /** 单个已下载文件的操作菜单 */
     private fun showFileActions(file: File) {
-        val actions = arrayOf("打开", "分享", "移动/另存到公共目录", "删除")
+        val actions = arrayOf(getString(R.string.open), getString(R.string.share), getString(R.string.move_save), getString(R.string.delete))
         AlertDialog.Builder(this)
             .setTitle(file.name)
             .setItems(actions) { _, idx ->
@@ -784,7 +813,7 @@ class MainActivity : AppCompatActivity() {
                     3 -> confirmDeleteLocal(file)
                 }
             }
-            .setNegativeButton("返回", null)
+            .setNegativeButton(R.string.back, null)
             .show()
     }
 
@@ -797,9 +826,9 @@ class MainActivity : AppCompatActivity() {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             intent.resolveActivity(packageManager)?.let { startActivity(intent) }
-                ?: Toast.makeText(this, "没有可打开此文件的应用", Toast.LENGTH_SHORT).show()
+                ?: Toast.makeText(this, getString(R.string.no_app), Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            Toast.makeText(this, "打开失败: ${e.message}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.open_fail, e.message), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -815,23 +844,23 @@ class MainActivity : AppCompatActivity() {
             exportLauncher.launch(intent)
         } catch (e: Exception) {
             pendingMoveFile = null
-            Toast.makeText(this, "无法打开位置选择器: ${e.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.picker_fail, e.message), Toast.LENGTH_LONG).show()
         }
     }
 
     /** 删除 App 内的已下载文件（专属目录，无需权限） */
     private fun confirmDeleteLocal(file: File) {
         AlertDialog.Builder(this)
-            .setTitle("删除")
-            .setMessage("确定删除《${file.name}》吗？此操作不可恢复。")
-            .setPositiveButton("删除") { _, _ ->
+            .setTitle(getString(R.string.delete))
+            .setMessage(getString(R.string.confirm_delete_local, file.name))
+            .setPositiveButton(getString(R.string.delete)) { _, _ ->
                 if (file.delete()) {
-                    Toast.makeText(this, "已删除", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, getString(R.string.deleted), Toast.LENGTH_SHORT).show()
                 } else {
-                    Toast.makeText(this, "删除失败", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, getString(R.string.delete_fail), Toast.LENGTH_SHORT).show()
                 }
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(getString(R.string.cancel), null)
             .show()
     }
 
@@ -857,17 +886,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun showFallbackNotice(path: String) {
         AlertDialog.Builder(this)
-            .setTitle("文件管理器不支持")
-            .setMessage("部分手机（华为、小米、OPPO）的文件管理器限制了应用专属目录的访问。\n\n建议使用\"分享\"功能把文件发到微信/QQ，或从文件管理器手动导航到：\n\n$path")
-            .setPositiveButton("复制路径") { _, _ -> copyPathToClipboard() }
-            .setNegativeButton("关闭", null)
+            .setTitle(R.string.fm_unsupported_title)
+            .setMessage(getString(R.string.fm_unsupported_msg, path))
+            .setPositiveButton(R.string.copy_path) { _, _ -> copyPathToClipboard() }
+            .setNegativeButton(getString(R.string.close), null)
             .show()
     }
 
     /** 用系统分享菜单一次性把所有下载文件发出去 */
     private fun shareAllFiles(files: List<File>) {
         if (files.isEmpty()) {
-            Toast.makeText(this, "还没有下载文件", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.no_downloads_toast), Toast.LENGTH_SHORT).show()
             return
         }
         val uris = files.mapNotNull { file ->
@@ -876,7 +905,7 @@ class MainActivity : AppCompatActivity() {
             } catch (_: Exception) { null }
         }
         if (uris.isEmpty()) {
-            Toast.makeText(this, "无法生成分享链接", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.share_link_fail), Toast.LENGTH_SHORT).show()
             return
         }
         val mime = guessMime(files.first())
@@ -893,7 +922,7 @@ class MainActivity : AppCompatActivity() {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
         }
-        startActivity(Intent.createChooser(intent, "分享下载的文件"))
+        startActivity(Intent.createChooser(intent, getString(R.string.share_title)))
     }
 
     private fun guessMime(file: File): String {
@@ -917,8 +946,8 @@ class MainActivity : AppCompatActivity() {
         html.append("h2{margin-top:0}table{border-collapse:collapse;width:100%}")
         html.append("td,th{border-bottom:1px solid #333;padding:8px;text-align:left}")
         html.append("body{font-family:sans-serif;padding:16px;background:#111;color:#eee}")
-        html.append("</style></head><body><h2>已下载 ${files.size} 个文件</h2>")
-        html.append("<table><thead><tr><th>文件名</th><th>大小</th></tr></thead><tbody>")
+        html.append("</style></head><body><h2>" + getString(R.string.html_downloads_title, files.size) + "</h2>")
+        html.append("<table><thead><tr><th>" + getString(R.string.html_col_name) + "</th><th>" + getString(R.string.html_col_size) + "</th></tr></thead><tbody>")
         files.sortedByDescending { it.lastModified() }.forEach { f ->
             html.append("<tr><td>${f.name}</td><td>${FileItem.formatSize(f.length())}</td></tr>")
         }
@@ -931,16 +960,16 @@ class MainActivity : AppCompatActivity() {
         }
         AlertDialog.Builder(this)
             .setView(webView)
-            .setTitle("已下载文件")
-            .setPositiveButton("关闭", null)
+            .setTitle(R.string.html_title)
+            .setPositiveButton(getString(R.string.close), null)
             .show()
     }
 
     private fun copyPathToClipboard() {
-        val text = "LanTransfer 下载路径: ${downloadDir.absolutePath}"
+        val text = getString(R.string.path_copied_text, downloadDir.absolutePath)
         val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("LanTransfer", text))
-        Toast.makeText(this, "路径已复制", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.path_copied), Toast.LENGTH_SHORT).show()
     }
 
     // --------------------------------------------------------------------------- #

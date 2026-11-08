@@ -10,7 +10,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:scaleType="centerCrop"
-        android:contentDescription="自定义背景" />
+        android:contentDescription="@string/bg_custom_desc" />
 
     <!-- 遮罩层：保证文字在任意图片上都可读 -->
     <View
@@ -46,7 +46,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="连接服务器"
+                android:text="@string/connect_title"
                 android:textColor="#eaf0ff"
                 android:textSize="16sp"
                 android:textStyle="bold" />
@@ -57,7 +57,10 @@
                 android:layout_width="wrap_content"
                 android:layout_height="36dp"
                 android:layout_marginStart="8dp"
-                android:text="🖼 背景"
+                android:minWidth="0dp"
+                android:maxLines="1"
+                android:paddingHorizontal="6dp"
+                android:text="@string/btn_background"
                 android:textColor="#5b8cff"
                 android:textSize="12sp" />
         </LinearLayout>
@@ -66,7 +69,7 @@
             android:id="@+id/etUrl"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="https://电脑IP:8765"
+            android:hint="@string/hint_url"
             android:textColorHint="#6b7a99"
             android:textColor="#eaf0ff"
             android:background="#232a44"
@@ -96,7 +99,10 @@
                 style="?attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="40dp"
-                android:text="🔍 扫描"
+                android:minWidth="0dp"
+                android:maxLines="1"
+                android:paddingHorizontal="6dp"
+                android:text="@string/btn_scan"
                 android:textColor="#5b8cff"
                 android:textSize="13sp"
                 android:layout_marginStart="6dp" />
@@ -106,7 +112,7 @@
             android:id="@+id/tvDiscoverHint"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="正在自动扫描局域网设备…"
+            android:text="@string/discover_scanning_auto"
             android:textColor="#6b7a99"
             android:textSize="11sp"
             android:layout_marginTop="2dp" />
@@ -115,7 +121,7 @@
             android:id="@+id/etToken"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="口令 token（?k= 后面的部分）"
+            android:hint="@string/hint_token"
             android:textColorHint="#6b7a99"
             android:textColor="#eaf0ff"
             android:background="#232a44"
@@ -134,7 +140,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="连接"
+                android:text="@string/btn_connect"
                 android:textColor="#ffffff"
                 android:backgroundTint="#5b8cff" />
 
@@ -143,7 +149,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="上传文件"
+                android:text="@string/btn_upload"
                 android:textColor="#ffffff"
                 android:backgroundTint="#31d6b0"
                 android:layout_marginStart="8dp" />
@@ -162,7 +168,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="📷 扫码"
+                android:text="@string/btn_qrscan"
                 android:textColor="#5b8cff"
                 android:textSize="13sp"
                 android:paddingVertical="4dp" />
@@ -173,7 +179,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="📁 已下载"
+                android:text="@string/btn_downloads"
                 android:textColor="#5b8cff"
                 android:textSize="13sp"
                 android:paddingVertical="4dp"
@@ -186,7 +192,7 @@
         android:id="@+id/tvStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="未连接"
+        android:text="@string/status_disconnected"
         android:textColor="#93a0c4"
         android:textSize="13sp"
         android:gravity="center"
@@ -246,7 +252,7 @@
         android:id="@+id/tvEmpty"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text='暂无文件，点击上方"上传文件"添加'
+        android:text="@string/empty_files"
         android:textColor="#6b7a99"
         android:textSize="13sp"
         android:gravity="center"

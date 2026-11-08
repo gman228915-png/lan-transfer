@@ -50,20 +50,26 @@
         android:id="@+id/btnDownload"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="下载"
+        android:text="@string/download"
         android:textSize="12sp"
         android:textColor="#ffffff"
         android:backgroundTint="#5b8cff"
+        android:minWidth="0dp"
+        android:maxLines="1"
+        android:paddingHorizontal="10dp"
         android:layout_marginStart="6dp" />
 
     <Button
         android:id="@+id/btnDelete"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="删除"
+        android:text="@string/delete"
         android:textSize="12sp"
         android:textColor="#ffffff"
         android:backgroundTint="#ff6b6b"
+        android:minWidth="0dp"
+        android:maxLines="1"
+        android:paddingHorizontal="10dp"
         android:layout_marginStart="4dp" />
 
 </LinearLayout>
