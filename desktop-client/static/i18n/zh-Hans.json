@@ -88,5 +88,6 @@
   "bg_saved_but": "背景已应用，但浏览器未能保存",
   "bg_updated": "背景已更新",
   "bg_read_fail": "读取图片失败",
-  "bg_reset_toast": "已恢复默认背景"
+  "bg_reset_toast": "已恢复默认背景",
+  "space_manage_hint": "分区请在电脑端「分区管理」中维护"
 }

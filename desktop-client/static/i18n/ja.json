@@ -88,5 +88,6 @@
   "bg_saved_but": "背景を適用しましたが、ブラウザに保存できませんでした",
   "bg_updated": "背景を更新しました",
   "bg_read_fail": "画像の読み込みに失敗しました",
-  "bg_reset_toast": "既定の背景に戻しました"
+  "bg_reset_toast": "既定の背景に戻しました",
+  "space_manage_hint": "フォルダはパソコン側で管理してください"
 }

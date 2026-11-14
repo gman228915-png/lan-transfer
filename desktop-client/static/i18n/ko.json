@@ -88,5 +88,6 @@
   "bg_saved_but": "배경을 적용했지만 브라우저에 저장하지 못했습니다",
   "bg_updated": "배경이 업데이트되었습니다",
   "bg_read_fail": "이미지를 읽지 못했습니다",
-  "bg_reset_toast": "기본 배경으로 복원했습니다"
+  "bg_reset_toast": "기본 배경으로 복원했습니다",
+  "space_manage_hint": "폴더는 PC 앱에서 관리하세요"
 }

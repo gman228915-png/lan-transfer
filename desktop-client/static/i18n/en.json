@@ -88,5 +88,6 @@
   "bg_saved_but": "Background applied, but the browser could not save it",
   "bg_updated": "Background updated",
   "bg_read_fail": "Could not read the image",
-  "bg_reset_toast": "Default background restored"
+  "bg_reset_toast": "Default background restored",
+  "space_manage_hint": "Manage folders in the desktop app"
 }

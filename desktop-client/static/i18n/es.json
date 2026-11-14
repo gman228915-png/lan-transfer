@@ -88,5 +88,6 @@
   "bg_saved_but": "Fondo aplicado, pero el navegador no pudo guardarlo",
   "bg_updated": "Fondo actualizado",
   "bg_read_fail": "No se pudo leer la imagen",
-  "bg_reset_toast": "Fondo predeterminado restaurado"
+  "bg_reset_toast": "Fondo predeterminado restaurado",
+  "space_manage_hint": "Gestiona las carpetas en la app de escritorio"
 }

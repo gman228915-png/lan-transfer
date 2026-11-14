@@ -288,6 +288,9 @@ class LanTransferApp:
         self.btn_appearance = self._make_btn(head_right, tr.t("btn_appearance"),
                                              self._open_bg_dialog, small=True)
         self.btn_appearance.pack(side="right", padx=(10, 0))
+        self.btn_spaces = self._make_btn(head_right, tr.t("btn_spaces"),
+                                         self._open_spaces_dialog, small=True)
+        self.btn_spaces.pack(side="right", padx=(10, 0))
         self.btn_expand_all = self._make_btn(head_right, tr.t("btn_expand_all"),
                                              self._expand_all, small=True)
         self.btn_expand_all.pack(side="right", padx=(10, 0))
@@ -386,6 +389,21 @@ class LanTransferApp:
         self.url_label.pack(fill="x", padx=12, pady=(0, 8))
 
         # ---------------- 右：发布文件 ----------------
+        self.pub_space_var = tk.StringVar()
+        pub_space_row = tk.Frame(pub_body, bg=PANEL)
+        pub_space_row.pack(fill="x", padx=12, pady=(2, 2))
+        tk.Label(pub_space_row, text=tr.t("space_label"), bg=PANEL, fg=TEXT_SOFT,
+                 font=("Segoe UI", 9)).pack(side="left")
+        self.pub_space_combo = ttk.Combobox(pub_space_row, textvariable=self.pub_space_var,
+                                            state="readonly", width=16,
+                                            font=("Segoe UI", 9))
+        self.pub_space_combo.pack(side="left", padx=(6, 0))
+        self.pub_space_combo.bind("<<ComboboxSelected>>",
+                                  lambda _e: self._on_space_change("pub"))
+        self.pub_space_hint = tk.Label(pub_space_row, text="", bg=PANEL, fg=MUTED,
+                                       font=("Segoe UI", 8), anchor="e")
+        self.pub_space_hint.pack(side="right")
+
         tk.Label(pub_body, text=tr.t("pub_hint"),
                  bg=PANEL, fg=MUTED, font=("Segoe UI", 8)).pack(
             anchor="w", padx=12, pady=(2, 4))
@@ -422,6 +440,21 @@ class LanTransferApp:
         self.btn_open_pub.pack(side="right")
 
         # ---------------- 右：接收文件 ----------------
+        self.recv_space_var = tk.StringVar()
+        recv_space_row = tk.Frame(recv_body, bg=PANEL)
+        recv_space_row.pack(fill="x", padx=12, pady=(2, 2))
+        tk.Label(recv_space_row, text=tr.t("space_label"), bg=PANEL, fg=TEXT_SOFT,
+                 font=("Segoe UI", 9)).pack(side="left")
+        self.recv_space_combo = ttk.Combobox(recv_space_row, textvariable=self.recv_space_var,
+                                             state="readonly", width=16,
+                                             font=("Segoe UI", 9))
+        self.recv_space_combo.pack(side="left", padx=(6, 0))
+        self.recv_space_combo.bind("<<ComboboxSelected>>",
+                                   lambda _e: self._on_space_change("recv"))
+        self.recv_space_hint = tk.Label(recv_space_row, text="", bg=PANEL, fg=MUTED,
+                                        font=("Segoe UI", 8), anchor="e")
+        self.recv_space_hint.pack(side="right")
+
         recv_wrap = tk.Frame(recv_body, bg=PANEL)
         recv_wrap.pack(fill="both", expand=True, padx=12, pady=(4, 8))
 
@@ -455,6 +488,8 @@ class LanTransferApp:
         for key in CARD_KEYS:
             self._apply_collapsed(key)
             self._refresh_card_chrome(key)
+
+        self._sync_space_controls()
 
         # 布局 & 背景
         self.canvas.bind("<Configure>", self._on_canvas_configure)
@@ -668,7 +703,7 @@ class LanTransferApp:
         空列表也只占 2 行，把空间让给另一列。
         """
         tree = self.pub_tree if key == "pub" else self.recv_tree
-        overhead = 146 if key == "pub" else 125
+        overhead = 176 if key == "pub" else 155
         rows = int((max(150, card_h) - overhead) // 26)
         rows = max(2, min(8, rows, self._want_tree_rows(key)))
         try:
@@ -1597,11 +1632,294 @@ class LanTransferApp:
             tree.insert("", "end", tags=("odd" if idx % 2 else "even",),
                         values=(f["name"], lan_transfer.human_size(f["size"]),))
 
+    # --------------------------------------------------------- 分区（spaces）
+    def _space_names(self):
+        return list(lan_transfer.SPACES.keys())
+
+    def _current_space(self, key):
+        """当前选中的分区；选中项失效时回退到默认分区。"""
+        var = self.pub_space_var if key == "pub" else self.recv_space_var
+        name = var.get()
+        space = lan_transfer.SPACES.get(name)
+        if space is None:
+            name = lan_transfer.DEFAULT_SPACE_NAME
+            space = lan_transfer.SPACES.get(name)
+            var.set(name)
+        return space
+
+    def _sync_space_controls(self):
+        """分区增删改后同步下拉取值与只读提示。"""
+        names = self._space_names()
+        for key, combo in (("pub", self.pub_space_combo), ("recv", self.recv_space_combo)):
+            combo.configure(values=names)
+            space = self._current_space(key)
+            if space is not None:
+                combo.set(space["name"])
+        pub_space = self._current_space("pub")
+        ro = bool(pub_space and pub_space["mode"] == "ro")
+        for btn in (self.btn_add_pub, self.btn_add_pub_dir, self.btn_delete_pub):
+            try:
+                if ro:
+                    btn.config(state="disabled", bg=PANEL_ALT, disabledforeground=MUTED)
+                else:
+                    btn.config(state="normal", bg=btn._normal_bg,
+                               disabledforeground=MUTED)
+            except tk.TclError:
+                pass
+        if ro:
+            hint = tr.t("space_ro_hint")
+        elif pub_space and pub_space["name"] == lan_transfer.DEFAULT_SPACE_NAME:
+            hint = tr.t("space_default_tag")
+        else:
+            hint = ""
+        self.pub_space_hint.config(text=hint)
+        self.recv_space_hint.config(
+            text=tr.t("spaces_fallback") if lan_transfer.SPACES_FALLBACK_REASON else "")
+
+    def _on_space_change(self, key):
+        """切换分区：立刻按新分区的目录刷新列表。"""
+        self._sync_space_controls()
+        self._refresh_all()
+
+    def _open_spaces_dialog(self):
+        if getattr(self, "_spaces_win", None) is not None:
+            try:
+                if self._spaces_win.winfo_exists():
+                    self._spaces_win.lift()
+                    self._refresh_spaces_list()
+                    return
+            except tk.TclError:
+                pass
+        win = tk.Toplevel(self.root)
+        self._spaces_win = win
+        win.title(tr.t("spaces_title"))
+        win.configure(bg=BG_BASE)
+        win.geometry("760x420")
+        win.transient(self.root)
+
+        tk.Label(win, text=tr.t("spaces_hint"), bg=BG_BASE, fg=TEXT_SOFT,
+                 font=("Segoe UI", 9), wraplength=720, justify="left").pack(
+            anchor="w", padx=14, pady=(12, 4))
+
+        self._spaces_warn = tk.Label(win, text="", bg=BG_BASE, fg=DANGER,
+                                     font=("Segoe UI", 9), wraplength=720, justify="left")
+        self._spaces_warn.pack(anchor="w", padx=14)
+
+        wrap = tk.Frame(win, bg=BG_BASE)
+        wrap.pack(fill="both", expand=True, padx=14, pady=8)
+        columns = ("name", "path", "mode", "files", "size", "default")
+        heads = (tr.t("col_space_name"), tr.t("col_space_path"), tr.t("col_space_mode"),
+                 tr.t("col_space_files"), tr.t("col_space_size"), tr.t("col_space_default"))
+        self.spaces_tree = ttk.Treeview(wrap, columns=columns, show="headings", height=9,
+                                        style="Pub.Treeview")
+        for col, head, width in zip(columns, heads, (110, 300, 80, 70, 90, 70)):
+            self.spaces_tree.heading(col, text=head)
+            self.spaces_tree.column(col, width=width, anchor="w" if col in ("name", "path") else "center")
+        scroll = ttk.Scrollbar(wrap, orient="vertical", style="Pub.Vertical.TScrollbar",
+                               command=self.spaces_tree.yview)
+        self.spaces_tree.configure(yscroll=scroll.set)
+        self.spaces_tree.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        self.spaces_tree.bind("<Double-1>", lambda _e: self._edit_space())
+
+        btns = tk.Frame(win, bg=BG_BASE)
+        btns.pack(fill="x", padx=14, pady=(0, 12))
+        self._make_btn(btns, tr.t("space_new"), self._new_space, primary=True).pack(side="left")
+        self._make_btn(btns, tr.t("space_edit"), self._edit_space).pack(side="left", padx=(8, 0))
+        self._make_btn(btns, tr.t("space_delete"), self._delete_space).pack(side="left", padx=(8, 0))
+        self._make_btn(btns, tr.t("space_set_default"), self._default_space).pack(side="left", padx=(8, 0))
+        self._make_btn(btns, tr.t("space_refresh"), self._refresh_spaces_list).pack(side="left", padx=(8, 0))
+        self._make_btn(btns, tr.t("space_cancel"), win.destroy).pack(side="right")
+        self._refresh_spaces_list()
+
+    def _refresh_spaces_list(self):
+        tree = getattr(self, "spaces_tree", None)
+        if tree is None:
+            return
+        for item in tree.get_children():
+            tree.delete(item)
+        for space in lan_transfer.spaces_summary():
+            tree.insert("", "end", iid=space["name"], values=(
+                space["name"], space["path"],
+                tr.t("mode_ro") if space["mode"] == "ro" else tr.t("mode_rw"),
+                space["files"], lan_transfer.human_size(space["size"]),
+                tr.t("space_default_tag") if space["default"] else "",
+            ))
+        reason = lan_transfer.SPACES_FALLBACK_REASON
+        warn = getattr(self, "_spaces_warn", None)
+        if warn is not None:
+            warn.config(text=(tr.t("spaces_fallback") + "  " + reason) if reason else "")
+
+    def _selected_space_name(self):
+        tree = getattr(self, "spaces_tree", None)
+        if tree is None:
+            return ""
+        selected = tree.selection()
+        if not selected:
+            messagebox.showinfo(tr.t("dlg_notice"), tr.t("select_first"))
+            return ""
+        return selected[0]
+
+    def _new_space(self):
+        self._space_form(None)
+
+    def _edit_space(self):
+        name = self._selected_space_name()
+        if name:
+            space = lan_transfer.SPACES.get(name)
+            if space:
+                self._space_form(space)
+
+    def _space_form(self, space):
+        """新建 / 编辑分区表单。"""
+        editing = space is not None
+        win = tk.Toplevel(self.root)
+        win.title(tr.t("space_form_edit") if editing else tr.t("space_form_new"))
+        win.configure(bg=BG_BASE)
+        win.geometry("520x300")
+        win.transient(self.root)
+        win.grab_set()
+
+        form = tk.Frame(win, bg=BG_BASE)
+        form.pack(fill="both", expand=True, padx=16, pady=14)
+        form.columnconfigure(1, weight=1)
+
+        def label(row, text):
+            tk.Label(form, text=text, bg=BG_BASE, fg=TEXT_SOFT, font=("Segoe UI", 9)).grid(
+                row=row, column=0, sticky="w", pady=6)
+
+        name_var = tk.StringVar(value=space["name"] if editing else "")
+        path_var = tk.StringVar(value=space["path"] if editing else "")
+        mode_var = tk.StringVar(value=space["mode"] if editing else "rw")
+        desc_var = tk.StringVar(value=space.get("description", "") if editing else "")
+
+        label(0, tr.t("fld_space_name"))
+        entry_name = tk.Entry(form, textvariable=name_var, font=("Segoe UI", 9))
+        entry_name.grid(row=0, column=1, columnspan=2, sticky="ew", pady=6)
+
+        label(1, tr.t("fld_space_path"))
+        entry_path = tk.Entry(form, textvariable=path_var, font=("Segoe UI", 9))
+        entry_path.grid(row=1, column=1, sticky="ew", pady=6)
+
+        def browse():
+            picked = filedialog.askdirectory(title=tr.t("fld_space_path"),
+                                             initialdir=path_var.get() or None)
+            if picked:
+                path_var.set(picked)
+
+        self._make_btn(form, tr.t("space_browse"), browse, small=True).grid(
+            row=1, column=2, padx=(8, 0))
+
+        label(2, tr.t("fld_space_mode"))
+        mode_row = tk.Frame(form, bg=BG_BASE)
+        mode_row.grid(row=2, column=1, columnspan=2, sticky="w", pady=6)
+        tk.Radiobutton(mode_row, text=tr.t("mode_rw"), variable=mode_var, value="rw",
+                       bg=BG_BASE, fg=TEXT_SOFT, selectcolor=PANEL_ALT,
+                       activebackground=BG_BASE, font=("Segoe UI", 9)).pack(side="left")
+        tk.Radiobutton(mode_row, text=tr.t("mode_ro"), variable=mode_var, value="ro",
+                       bg=BG_BASE, fg=TEXT_SOFT, selectcolor=PANEL_ALT,
+                       activebackground=BG_BASE, font=("Segoe UI", 9)).pack(side="left", padx=(12, 0))
+
+        label(3, tr.t("fld_space_desc"))
+        tk.Entry(form, textvariable=desc_var, font=("Segoe UI", 9)).grid(
+            row=3, column=1, columnspan=2, sticky="ew", pady=6)
+
+        tip = tk.Label(form, text="", bg=BG_BASE, fg=DANGER, font=("Segoe UI", 9),
+                       wraplength=460, justify="left")
+        tip.grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
+        def save():
+            fields = dict(name=name_var.get(), path=path_var.get(),
+                          mode=mode_var.get(), description=desc_var.get())
+            try:
+                if editing:
+                    lan_transfer.update_space(space["name"], **fields)
+                else:
+                    lan_transfer.create_space(**fields)
+            except lan_transfer.SpaceError as exc:
+                tip.config(text=str(exc))
+                return
+            win.destroy()
+            self._refresh_spaces_list()
+            self._sync_space_controls()
+            self._refresh_all()
+
+        actions = tk.Frame(form, bg=BG_BASE)
+        actions.grid(row=5, column=0, columnspan=3, sticky="e", pady=(10, 0))
+        self._make_btn(actions, tr.t("space_cancel"), win.destroy).pack(side="right")
+        self._make_btn(actions, tr.t("space_save"), save, primary=True).pack(
+            side="right", padx=(0, 8))
+        entry_name.focus_set()
+
+    def _ask_confirm(self, title, message, ok_text):
+        """自绘确认框：文案可换行，按钮与主题一致，便于截图核对。"""
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.configure(bg=BG_BASE)
+        win.transient(self.root)
+        win.grab_set()
+        win.resizable(False, False)
+        result = {"ok": False}
+        tk.Label(win, text=message, bg=BG_BASE, fg=TEXT, justify="left",
+                 wraplength=400, font=("Segoe UI", 10)).pack(padx=20, pady=(18, 12))
+        row = tk.Frame(win, bg=BG_BASE)
+        row.pack(pady=(0, 16), padx=20, anchor="e")
+
+        def ok():
+            result["ok"] = True
+            win.destroy()
+
+        self._make_btn(row, tr.t("space_cancel"), win.destroy).pack(side="right")
+        self._make_btn(row, ok_text, ok, primary=True).pack(side="right", padx=(0, 8))
+        win.update_idletasks()
+        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - win.winfo_width()) // 2)
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - win.winfo_height()) // 3)
+        win.geometry("+%d+%d" % (x, y))
+        self.root.wait_window(win)
+        return result["ok"]
+
+    def _delete_space(self):
+        name = self._selected_space_name()
+        if not name:
+            return
+        if not self._ask_confirm(tr.t("dlg_confirm_delete"),
+                                 tr.t("space_confirm_delete", name=name),
+                                 tr.t("space_delete")):
+            return
+        try:
+            lan_transfer.delete_space(name)
+        except lan_transfer.SpaceError as exc:
+            messagebox.showwarning(tr.t("dlg_notice"), str(exc))
+            return
+        self._refresh_spaces_list()
+        self._sync_space_controls()
+        self._refresh_all()
+        messagebox.showinfo(tr.t("dlg_done"), tr.t("space_delete_ok", name=name))
+
+    def _default_space(self):
+        name = self._selected_space_name()
+        if not name:
+            return
+        try:
+            lan_transfer.set_default_space(name)
+        except lan_transfer.SpaceError as exc:
+            messagebox.showwarning(tr.t("dlg_notice"), str(exc))
+            return
+        self._refresh_spaces_list()
+        self._sync_space_controls()
+        self._refresh_all()
+
     def _refresh_all(self):
-        """同时刷新发布/接收两个列表。"""
+        """按当前选中的分区刷新发布/接收两个列表。"""
+        pub_space = self._current_space("pub")
+        recv_space = self._current_space("recv")
         before = (len(self.pub_tree.get_children()), len(self.recv_tree.get_children()))
-        self._refresh_tree(self.pub_tree, lan_transfer.list_files(lan_transfer.PUBLISH_DIR))
-        self._refresh_tree(self.recv_tree, lan_transfer.list_files(lan_transfer.RECEIVE_DIR))
+        self._refresh_tree(self.pub_tree, lan_transfer.list_files(
+            pub_space["path"] if pub_space else lan_transfer.PUBLISH_DIR,
+            pub_space["name"] if pub_space else None))
+        self._refresh_tree(self.recv_tree, lan_transfer.list_files(
+            recv_space["path"] if recv_space else lan_transfer.RECEIVE_DIR,
+            recv_space["name"] if recv_space else None))
         after = (len(self.pub_tree.get_children()), len(self.recv_tree.get_children()))
         if before != after:
             # 文件数变化后按新数量重新分配列表可见行数
@@ -1625,9 +1943,23 @@ class LanTransferApp:
             except tk.TclError:
                 pass
         self.lbl_recv_hint.config(text=text or tr.t("recv_busy_hint"))
+        if not busy:
+            self._sync_space_controls()
+
+    def _pub_target_dir(self):
+        space = self._current_space("pub")
+        if space is None:
+            return lan_transfer.PUBLISH_DIR
+        if space["mode"] == "ro":
+            messagebox.showwarning(tr.t("dlg_notice"), tr.t("space_ro_hint"))
+            return None
+        return space["path"]
 
     def _add_publish_files(self):
-        """添加文件到发布目录（后台复制，大文件不卡界面）。"""
+        """添加文件到当前发布分区（后台复制，大文件不卡界面）。"""
+        target = self._pub_target_dir()
+        if not target:
+            return
         paths = filedialog.askopenfilenames(
             title=tr.t("choose_files_title"),
             # 第一项即默认筛选项：「所有文件」，不按后缀过滤；其余仅为快捷筛选
@@ -1641,10 +1973,13 @@ class LanTransferApp:
             ])
         if not paths:
             return
-        self._copy_to_dir(list(paths), lan_transfer.PUBLISH_DIR, tr.t("card_pub"))
+        self._copy_to_dir(list(paths), target, tr.t("card_pub"))
 
     def _add_publish_folder(self):
-        """把整个文件夹里的所有文件平铺发布到发布目录（后台复制，不按后缀过滤）。"""
+        """把整个文件夹里的所有文件平铺发布到当前分区（后台复制，不按后缀过滤）。"""
+        target = self._pub_target_dir()
+        if not target:
+            return
         src = filedialog.askdirectory(title=tr.t("choose_folder_title"))
         if not src:
             return
@@ -1655,14 +1990,13 @@ class LanTransferApp:
         def work():
             import shutil
             count, errors = 0, []
-            # 递归遍历，任意后缀都发布；发布目录只支持单层文件，因此平铺
+            # 递归遍历，任意后缀都发布；分区只支持单层文件，因此平铺
             for root, _dirs, files in os.walk(src):
                 for name in files:
                     path = os.path.join(root, name)
                     try:
                         dest = os.path.join(
-                            lan_transfer.PUBLISH_DIR,
-                            lan_transfer.unique_name(name, lan_transfer.PUBLISH_DIR))
+                            target, lan_transfer.unique_name(name, target))
                         shutil.copy2(path, dest)
                         count += 1
                     except Exception as exc:
@@ -1711,7 +2045,11 @@ class LanTransferApp:
             messagebox.showinfo(tr.t("dlg_done"), tr.t("copy_done", count=count, label=label))
 
     def _delete_publish_files(self):
-        """删除发布目录中选中的文件。"""
+        """删除当前发布分区中选中的文件。"""
+        space = self._current_space("pub")
+        target = self._pub_target_dir()
+        if not target:
+            return
         selected = self.pub_tree.selection()
         if not selected:
             messagebox.showinfo(tr.t("dlg_notice"), tr.t("select_first"))
@@ -1724,7 +2062,7 @@ class LanTransferApp:
             values = self.pub_tree.item(iid, "values")
             name = values[0]
             try:
-                os.remove(os.path.join(lan_transfer.PUBLISH_DIR, name))
+                os.remove(os.path.join(target, name))
                 count += 1
             except OSError as e:
                 messagebox.showwarning(tr.t("dlg_delete_failed"), "%s: %s" % (name, e))
@@ -1753,10 +2091,12 @@ class LanTransferApp:
                             tr.t("link_copied", url=self._share_url))
 
     def _open_publish_folder(self):
-        self._open_dir(lan_transfer.PUBLISH_DIR)
+        space = self._current_space("pub")
+        self._open_dir(space["path"] if space else lan_transfer.PUBLISH_DIR)
 
     def _open_receive_folder(self):
-        self._open_dir(lan_transfer.RECEIVE_DIR)
+        space = self._current_space("recv")
+        self._open_dir(space["path"] if space else lan_transfer.RECEIVE_DIR)
 
     def _open_dir(self, path):
         os.makedirs(path, exist_ok=True)
