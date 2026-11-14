@@ -38,7 +38,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "lan-transfer"
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.8.0"
 API_VERSION = 1
 
 TOKEN_CHARS = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -118,6 +118,8 @@ SESSION_FILE = os.path.join(BASE_DIR, "upload-sessions.json")
 # 空间：name -> {name, path, mode, token, description}
 SPACES = OrderedDict()
 DEFAULT_SPACE_NAME = ""
+# 配置损坏时的原因，界面据此提示用户（不为空表示当前跑的是最小可用配置）
+SPACES_FALLBACK_REASON = ""
 
 LOG_LOCK = threading.Lock()
 AUDIT_LOCK = threading.Lock()
@@ -209,18 +211,189 @@ def _write_default_spaces(path):
     log("  已生成空间配置: %s" % path)
 
 
-def load_spaces(config_path=None, create=True):
-    """加载空间配置；不存在时自动生成示例并载入。配置有误时抛 ValueError。"""
-    global SPACES, DEFAULT_SPACE_NAME, SPACES_FILE
-    if config_path:
-        SPACES_FILE = os.path.abspath(os.path.expanduser(config_path))
+class SpaceError(ValueError):
+    """分区配置校验失败；消息会直接展示给用户，必须是中文可读文案。"""
 
-    path = SPACES_FILE
-    if not os.path.isfile(path):
-        if not create:
-            raise ValueError("空间配置文件不存在: %s" % path)
-        _write_default_spaces(path)
 
+WINDOWS_RESERVED_NAMES = (
+    {"CON", "PRN", "AUX", "NUL"}
+    | {"COM%d" % i for i in range(1, 10)}
+    | {"LPT%d" % i for i in range(1, 10)}
+)
+
+
+def validate_space_name(name, existing=None, ignore=None):
+    """校验分区名：安全字符 + 非保留名 + 不重名。"""
+    name = str(name or "").strip()
+    if not name:
+        raise SpaceError("分区名不能为空")
+    if not re.match(r"^[A-Za-z0-9_-]{1,40}$", name):
+        raise SpaceError("分区名只能包含字母、数字、下划线、连字符（1–40 个字符）")
+    if name.upper() in WINDOWS_RESERVED_NAMES:
+        raise SpaceError("分区名 %s 是 Windows 保留名，请换一个" % name)
+    if existing is not None and name in existing and name != ignore:
+        raise SpaceError("分区名已存在：%s" % name)
+    return name
+
+
+def _protected_dirs():
+    """不允许作为分区根目录的位置：返回 (连子目录一起禁止, 仅禁止本身)。"""
+    system_roots = []
+    for env in ("SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"):
+        value = os.environ.get(env)
+        if value:
+            system_roots.append(value)
+    exact_roots = [os.path.expanduser("~")]
+    system_drive = os.environ.get("SystemDrive")
+    if system_drive:
+        exact_roots.append(os.path.join(system_drive + os.sep, "Users"))
+        system_roots.append(os.path.join(system_drive + os.sep, "Windows"))
+
+    def norm(value):
+        return os.path.realpath(os.path.abspath(value))
+
+    return ([norm(p) for p in system_roots if p], [norm(p) for p in exact_roots if p])
+
+
+def validate_space_path(path):
+    """规范化并校验分区目录：非盘符根、非系统目录、非文件、可写。"""
+    raw = str(path or "").strip()
+    if not raw:
+        raise SpaceError("请选择或填写文件夹路径")
+    target = os.path.abspath(os.path.expanduser(raw))
+    real = os.path.realpath(target)
+    _drive, rest = os.path.splitdrive(real)
+    if rest.strip("\\/") == "":
+        raise SpaceError("不能使用盘符根目录作为分区：%s" % real)
+    blocked_sub, blocked_exact = _protected_dirs()
+    for blocked in blocked_sub:
+        if real == blocked or real.startswith(blocked + os.sep):
+            raise SpaceError("不能把分区指向系统目录：%s" % real)
+    for blocked in blocked_exact:
+        if real == blocked:
+            raise SpaceError("不能把分区指向系统目录：%s" % real)
+    if os.path.exists(real) and not os.path.isdir(real):
+        raise SpaceError("该路径是一个文件，请选择文件夹：%s" % real)
+    try:
+        os.makedirs(real, exist_ok=True)
+    except OSError as exc:
+        raise SpaceError("目录无法创建：%s（%s）" % (real, exc))
+    probe = os.path.join(real, ".lt-write-test")
+    try:
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write("ok")
+        os.remove(probe)
+    except OSError as exc:
+        raise SpaceError("目录不可写：%s（%s）" % (real, exc))
+    return target
+
+
+def _yaml_scalar(value):
+    """按需给 YAML 值加引号，避免冒号 / # 破坏解析。"""
+    text = str(value)
+    if text == "" or re.search(r"[:#]", text) or text != text.strip():
+        return '"%s"' % text.replace('"', "'")
+    if text[0] in "-?&*!|>%@`":
+        return '"%s"' % text
+    return text
+
+
+def _yaml_layout(text):
+    """拆出文件头注释、每个分区上方的注释、尾部注释，便于原样写回。"""
+    header, comments, tail = [], {}, []
+    pending = []
+    in_spaces = False
+    seen_entry = False
+    for raw in (text or "").splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            if not seen_entry:
+                header.append(raw)
+            else:
+                pending.append(raw)
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        if indent == 0:
+            in_spaces = stripped.endswith(":") and stripped[:-1].strip() == "spaces"
+            if in_spaces and pending:
+                tail.extend(pending)
+                pending = []
+            continue
+        if not in_spaces:
+            continue
+        if stripped.startswith("- "):
+            seen_entry = True
+            match = re.match(r"name:\s*(.+)", stripped[2:].strip())
+            name = _unquote(match.group(1)) if match else ""
+            if name:
+                comments[name] = pending
+            pending = []
+    if pending:
+        tail.extend(pending)
+    return header, comments, tail
+
+
+def render_spaces_yaml(spaces, default_name, header=None, comments=None, tail=None):
+    """把分区列表渲染成 spaces.yaml 文本（尽量保留旧文件里的注释）。"""
+    lines = list(header) if header else [
+        "# 局域网互传 - 空间配置（可在软件里「分区管理」中修改）",
+        "# mode: rw（可上传、可删除） / ro（只读，仅允许下载）",
+        "# token: 可选，给该空间单独设置口令（留空表示只认全局口令）",
+    ]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    lines.append("")
+    lines.append("default_space: %s" % default_name)
+    lines.append("")
+    lines.append("spaces:")
+    for space in spaces:
+        for comment in (comments or {}).get(space["name"], []):
+            lines.append(comment)
+        lines.append("  - name: %s" % space["name"])
+        lines.append("    path: %s" % _yaml_scalar(space["path"]))
+        lines.append("    mode: %s" % space["mode"])
+        if space.get("description"):
+            lines.append("    description: %s" % _yaml_scalar(space["description"]))
+        if space.get("token"):
+            lines.append("    token: %s" % _yaml_scalar(space["token"]))
+    if tail:
+        lines.append("")
+        lines.extend(tail)
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def save_spaces(spaces, default_name, path=None):
+    """原子写入 spaces.yaml：先写临时文件再 os.replace，写坏也不会毁掉旧配置。"""
+    path = path or SPACES_FILE
+    old_text = ""
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                old_text = fh.read()
+        except OSError:
+            old_text = ""
+    header, comments, tail = _yaml_layout(old_text)
+    text = render_spaces_yaml(spaces, default_name, header, comments, tail)
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except OSError as exc:
+        try:
+            if os.path.isfile(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        raise SpaceError("写入分区配置失败：%s" % exc)
+
+
+def _read_spaces_file(path):
+    """读取并校验配置，返回 (OrderedDict, default_name)。"""
     if path.lower().endswith(".json"):
         with open(path, "r", encoding="utf-8") as fh:
             cfg = json.load(fh)
@@ -238,16 +411,15 @@ def load_spaces(config_path=None, create=True):
     for entry in items:
         if not isinstance(entry, dict):
             raise ValueError("spaces 每一项都必须是对象")
-        name = str(entry.get("name", "")).strip()
-        if not re.match(r"^[A-Za-z0-9_-]{1,40}$", name):
-            raise ValueError("空间名不合法（仅允许字母数字 _ -）: %r" % name)
+        name = validate_space_name(entry.get("name"))
         if name in loaded:
             raise ValueError("空间名重复: %s" % name)
         raw_path = str(entry.get("path", "")).strip()
         if not raw_path:
             raise ValueError("空间 %s 缺少 path" % name)
-        space_path = os.path.abspath(os.path.expanduser(raw_path))
-        if not os.path.isabs(os.path.expanduser(raw_path)):
+        if os.path.isabs(os.path.expanduser(raw_path)):
+            space_path = os.path.abspath(os.path.expanduser(raw_path))
+        else:
             space_path = os.path.abspath(os.path.join(base, raw_path))
         real = os.path.realpath(space_path)
         if real in seen_paths:
@@ -272,10 +444,148 @@ def load_spaces(config_path=None, create=True):
     default = str(cfg.get("default_space", "")).strip()
     if default not in loaded:
         default = next(iter(loaded.keys()))
+    return loaded, default
+
+
+def _fallback_spaces():
+    """配置损坏时的最小可用配置：inbox / shared，不覆盖用户原文件。"""
+    loaded = OrderedDict()
+    for name, folder, desc in (
+        ("inbox", "received-files", "手机或其他设备上传到这里"),
+        ("shared", "shared-files", "电脑端发布、供其他设备下载"),
+    ):
+        path = os.path.join(BASE_DIR, folder)
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError:
+            pass
+        loaded[name] = {"name": name, "path": path, "mode": "rw",
+                        "token": "", "description": desc}
+    return loaded, "inbox"
+
+
+def load_spaces(config_path=None, create=True):
+    """加载空间配置；不存在时自动生成示例。配置损坏时回退到最小配置，不抛异常。"""
+    global SPACES, DEFAULT_SPACE_NAME, SPACES_FILE, SPACES_FALLBACK_REASON
+    if config_path:
+        SPACES_FILE = os.path.abspath(os.path.expanduser(config_path))
+
+    path = SPACES_FILE
+    if not os.path.isfile(path):
+        if not create:
+            raise ValueError("空间配置文件不存在: %s" % path)
+        _write_default_spaces(path)
+
+    try:
+        loaded, default = _read_spaces_file(path)
+        SPACES_FALLBACK_REASON = ""
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        loaded, default = _fallback_spaces()
+        SPACES_FALLBACK_REASON = str(exc)
+        log("  [警告] 空间配置不可用，已回退到最小配置（inbox / shared）")
+        log("         原因: %s" % exc)
+        try:
+            slog("spaces_fallback", level="error", error=str(exc), path=path)
+        except Exception:
+            pass
+
     SPACES = loaded
     DEFAULT_SPACE_NAME = default
     log("  空间配置: %s（%d 个空间，默认 %s）" % (path, len(loaded), default))
     return loaded
+
+
+def spaces_as_list():
+    """当前分区列表（可直接写回 YAML 的 dict 列表）。"""
+    return [dict(space) for space in SPACES.values()]
+
+
+def spaces_summary():
+    """给界面 / API 用的分区摘要（含文件数与占用大小）。"""
+    result = []
+    for name, space in SPACES.items():
+        files, size = count_space_files(space)
+        result.append({
+            "name": name,
+            "mode": space["mode"],
+            "description": space["description"],
+            "path": space["path"],
+            "files": files,
+            "size": size,
+            "default": name == DEFAULT_SPACE_NAME,
+            "has_own_token": bool(space.get("token")),
+        })
+    return result
+
+
+def _normalize_mode(mode):
+    value = str(mode or "rw").strip().lower()
+    return "ro" if value == "ro" else "rw"
+
+
+def create_space(name, path, mode="rw", description=""):
+    """新建分区：校验 → 原子写回 → 立即重载（服务端无需重启）。"""
+    name = validate_space_name(name, existing=SPACES)
+    real_path = validate_space_path(path)
+    items = spaces_as_list()
+    items.append({"name": name, "path": real_path, "mode": _normalize_mode(mode),
+                  "token": "", "description": str(description or "").strip()})
+    save_spaces(items, DEFAULT_SPACE_NAME)
+    load_spaces()
+    log("  已新建分区: %s -> %s (%s)" % (name, real_path, _normalize_mode(mode)))
+    return SPACES[name]
+
+
+def update_space(old_name, name=None, path=None, mode=None, description=None):
+    """编辑分区（改名 / 改路径 / 改权限 / 改描述）。"""
+    old_name = str(old_name or "").strip()
+    if old_name not in SPACES:
+        raise SpaceError("分区不存在：%s" % old_name)
+    new_name = validate_space_name(name if name is not None else old_name,
+                                   existing=SPACES, ignore=old_name)
+    items = spaces_as_list()
+    for item in items:
+        if item["name"] != old_name:
+            continue
+        item["name"] = new_name
+        if path is not None:
+            item["path"] = validate_space_path(path)
+        if mode is not None:
+            item["mode"] = _normalize_mode(mode)
+        if description is not None:
+            item["description"] = str(description).strip()
+    default = new_name if DEFAULT_SPACE_NAME == old_name else DEFAULT_SPACE_NAME
+    save_spaces(items, default)
+    load_spaces()
+    log("  已更新分区: %s -> %s" % (old_name, new_name))
+    return SPACES[new_name]
+
+
+def delete_space(name):
+    """删除分区：只移除配置，不删磁盘文件。默认分区需先改默认。"""
+    name = str(name or "").strip()
+    if name not in SPACES:
+        raise SpaceError("分区不存在：%s" % name)
+    if name == DEFAULT_SPACE_NAME:
+        raise SpaceError("默认分区不能删除，请先把其他分区设为默认")
+    if len(SPACES) <= 1:
+        raise SpaceError("至少需要保留一个分区")
+    items = [item for item in spaces_as_list() if item["name"] != name]
+    save_spaces(items, DEFAULT_SPACE_NAME)
+    load_spaces()
+    log("  已删除分区: %s（磁盘文件保留）" % name)
+    return True
+
+
+def set_default_space(name):
+    """设置默认分区（上传未指定 space 时落这里）。"""
+    name = str(name or "").strip()
+    if name not in SPACES:
+        raise SpaceError("分区不存在：%s" % name)
+    save_spaces(spaces_as_list(), name)
+    load_spaces()
+    log("  默认分区已改为: %s" % name)
+    return True
 
 
 def space_by_name(name):
@@ -1096,6 +1406,12 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         if path == "/api/token/rotate":
             self._token_rotate(query)
             return
+        if path == "/api/spaces":
+            self._space_admin("create", query)
+            return
+        if path == "/api/spaces/default":
+            self._space_admin("default", query)
+            return
         if path == "/api/upload/session":
             self._upload_session_create(query)
             return
@@ -1129,6 +1445,16 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
             return
         self._send(404, "404 Not Found")
 
+    # ---------------------------- PATCH（编辑分区） ---------------------------- #
+    def do_PATCH(self):
+        parsed = urllib.parse.urlsplit(self.path)
+        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        path = urllib.parse.unquote(parsed.path)
+        if path.startswith("/api/spaces/"):
+            self._space_admin("update", query, path)
+            return
+        self._send(404, "404 Not Found")
+
     # ---------------------------- DELETE ---------------------------- #
     def do_DELETE(self):
         parsed = urllib.parse.urlsplit(self.path)
@@ -1136,6 +1462,9 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         path = urllib.parse.unquote(parsed.path)
         if path.startswith("/api/upload/session/"):
             self._upload_session_abort(query, path)
+            return
+        if path.startswith("/api/spaces/"):
+            self._space_admin("delete", query, path)
             return
         if path != "/api/files":
             self._send(404, "404 Not Found")
@@ -1219,6 +1548,7 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
                 "path": space["path"],
                 "files": files,
                 "size": size,
+                "default": name == DEFAULT_SPACE_NAME,
                 "has_own_token": bool(space.get("token")),
             })
         return {
@@ -1226,6 +1556,55 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
             "spaces": result,
             "version": APP_VERSION,
         }
+
+    def _space_admin(self, action, query, path=""):
+        """分区增删改（仅全局口令）；改完立即生效，无需重启服务。"""
+        token = self._token(query)
+        if not self._global_token_ok(token):
+            self._json({"error": "需要全局口令才能管理分区", "code": "unauthorized"}, 403)
+            return
+        body = self._read_json_body()
+        if body is None:
+            self._json({"error": "请求体必须是 JSON 对象", "code": "bad_request"}, 400)
+            return
+        prefix = "/api/spaces/"
+        target = urllib.parse.unquote(path[len(prefix):]).strip() if path.startswith(prefix) else ""
+        try:
+            if action == "create":
+                create_space(body.get("name"), body.get("path"),
+                             body.get("mode"), body.get("description"))
+            elif action == "update":
+                update_space(target, name=body.get("name"), path=body.get("path"),
+                             mode=body.get("mode"), description=body.get("description"))
+            elif action == "delete":
+                delete_space(target)
+            elif action == "default":
+                set_default_space(body.get("name"))
+            else:
+                self._json({"error": "未知操作"}, 400)
+                return
+        except SpaceError as exc:
+            self._json({"error": str(exc), "code": "invalid"}, 400)
+            return
+        slog("space_admin", action=action, space=target or str(body.get("name") or ""))
+        self._json({"ok": True, "default": DEFAULT_SPACE_NAME, "spaces": spaces_summary()})
+
+    def _read_json_body(self):
+        """读取 JSON 请求体；空体返回 {}，非法返回 None。"""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0:
+            return {}
+        if length > 64 * 1024:
+            return None
+        raw = self.rfile.read(length)
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return None
+        return data if isinstance(data, dict) else None
 
     def _handle_hash(self, token, query):
         raw = query.get("name", [""])[0]

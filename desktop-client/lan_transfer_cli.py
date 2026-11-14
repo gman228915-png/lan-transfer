@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.8.0"
 DISCOVERY_PORT = 8766
 CHUNK_SIZE = 8 * 1024 * 1024
 

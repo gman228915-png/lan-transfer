@@ -75,7 +75,7 @@
 ```json
 {
   "default": "inbox",
-  "version": "1.4.0",
+  "version": "1.8.0",
   "spaces": [
     {
       "name": "inbox",
@@ -84,11 +84,66 @@
       "path": "D:\\文件传输\\received-files",
       "files": 3,
       "size": 1024,
+      "default": true,
       "has_own_token": false
     }
   ]
 }
 ```
+
+### 分区管理接口（v1.8.0 新增）
+
+四个写接口**都要求全局口令**（`?k=`、`Authorization: Bearer` 或 `Cookie: k=`），
+请求体为 JSON（`Content-Type: application/json`）。改完立即重载配置，**不需要重启服务**。
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| `POST` | `/api/spaces` | 新建分区 |
+| `PATCH` | `/api/spaces/<name>` | 编辑分区（改名 / 改路径 / 改权限 / 改描述） |
+| `DELETE` | `/api/spaces/<name>` | 删除分区（只移除配置，不删磁盘文件） |
+| `POST` | `/api/spaces/default` | 设置默认分区 |
+
+新建请求体：
+
+```json
+{ "name": "media", "path": "D:\\共享\\media", "mode": "rw", "description": "电影与剧集" }
+```
+
+编辑请求体：字段均可选，只传要改的（`name` 表示改名）。
+
+```json
+{ "name": "movies", "path": "D:\\共享\\movies", "mode": "ro", "description": "只读归档" }
+```
+
+设置默认：
+
+```json
+{ "name": "media" }
+```
+
+成功统一返回当前全部分区：
+
+```json
+{ "ok": true, "default": "media", "spaces": [ { "name": "media", "mode": "rw", "files": 2, "size": 40960, "default": true, "path": "D:\\共享\\media" } ] }
+```
+
+校验失败返回 `400`，中文可读原因：
+
+| `error` 示例 | 触发条件 |
+|---|---|
+| `分区名不能为空` | name 为空 |
+| `分区名只能包含字母、数字、下划线、连字符（1–40 个字符）` | 含 `/`、空格、控制字符等 |
+| `分区名 CON 是 Windows 保留名，请换一个` | CON / PRN / AUX / NUL / COM1-9 / LPT1-9 |
+| `分区名已存在：media` | 重名 |
+| `不能使用盘符根目录作为分区：C:\` | 路径为盘符根 |
+| `不能把分区指向系统目录：C:\Windows` | Windows / System32 / Program Files / ProgramData / 用户根目录 |
+| `该路径是一个文件，请选择文件夹：...` | 路径已存在且是文件 |
+| `目录不可写：...` | 无写权限 |
+| `默认分区不能删除，请先把其他分区设为默认` | 删除默认分区 |
+| `至少需要保留一个分区` | 删除最后一个 |
+
+没有全局口令时返回 `403 {"error": "需要全局口令才能管理分区", "code": "unauthorized"}`。
+只读分区的上传仍返回 `403 {"code": "read_only"}`，与 v1.7 一致。
 
 ## 文件
 
