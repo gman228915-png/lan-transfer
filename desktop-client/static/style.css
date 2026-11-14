@@ -374,6 +374,13 @@ h1 { font-size: 19px; margin: 0; letter-spacing: 0.2px; }
   background: #1a2138;
 }
 .space-select:focus { border-color: rgba(91, 140, 255, 0.55); }
+.space-note {
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 190px;
+  line-height: 1.35;
+}
+@media (max-width: 720px) { .space-note { display: none; } }
 
 .file-list { display: flex; flex-direction: column; gap: 9px; }
 
