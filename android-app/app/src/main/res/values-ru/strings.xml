@@ -114,4 +114,30 @@
     <string name="html_title">Скачанные файлы</string>
     <string name="path_copied_text">Путь загрузки LanTransfer: %1$s</string>
     <string name="path_copied">Путь скопирован</string>
+    <!-- новый раздел (v1.8.1) -->
+    <string name="btn_new_space">＋ Новый раздел</string>
+    <string name="dlg_new_space_title">Новый раздел</string>
+    <string name="hint_space_name">Имя раздела (буквы, цифры, _ или -)</string>
+    <string name="hint_space_path">Папка на компьютере, напр. D:\\Общие\\media</string>
+    <string name="btn_browse">Обзор</string>
+    <string name="space_mode_rw">Чтение и запись</string>
+    <string name="space_mode_ro">Только чтение</string>
+    <string name="hint_space_desc">Описание (необязательно)</string>
+    <string name="btn_create">Создать</string>
+    <string name="space_created">Раздел «%1$s» создан</string>
+    <string name="space_create_failed">Не удалось создать раздел</string>
+    <string name="need_token_title">Нужен токен доступа</string>
+    <string name="need_token_msg">Для управления разделами нужен глобальный токен компьютера (часть после ?k=). Нажмите «Ввести токен», введите его и подключитесь снова.</string>
+    <string name="goto_fill_token">Ввести токен</string>
+    <string name="dlg_browse_title">Выберите папку на компьютере</string>
+    <string name="browse_pick">Выбрать эту папку</string>
+    <string name="browse_up">Вверх</string>
+    <string name="browse_loading">Загрузка…</string>
+    <string name="browse_failed">Не удалось прочитать папку</string>
+    <string name="browse_writable">доступна запись</string>
+    <string name="browse_readonly">только чтение</string>
+    <string name="browse_hint">Вложенных папок: %1$d · эта папка %2$s; нажмите, чтобы открыть</string>
+    <string name="browse_truncated">Вложенных папок: %1$d (не более 500) · эта папка %2$s</string>
+    <string name="browse_dir_rw">%1$s (доступна запись)</string>
+    <string name="browse_dir_ro">%1$s (только чтение)</string>
 </resources>

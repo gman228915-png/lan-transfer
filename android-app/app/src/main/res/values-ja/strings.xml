@@ -114,4 +114,30 @@
     <string name="html_title">ダウンロード済みファイル</string>
     <string name="path_copied_text">LanTransfer の保存先：%1$s</string>
     <string name="path_copied">パスをコピーしました</string>
+    <!-- 新規スペース（v1.8.1） -->
+    <string name="btn_new_space">＋ 新規スペース</string>
+    <string name="dlg_new_space_title">新規スペース</string>
+    <string name="hint_space_name">スペース名（英数字・_・-）</string>
+    <string name="hint_space_path">パソコン上のフォルダ（例 D:\\共有\\media）</string>
+    <string name="btn_browse">参照</string>
+    <string name="space_mode_rw">読み書き</string>
+    <string name="space_mode_ro">読み取り専用</string>
+    <string name="hint_space_desc">説明（任意）</string>
+    <string name="btn_create">作成</string>
+    <string name="space_created">スペース「%1$s」を作成しました</string>
+    <string name="space_create_failed">作成に失敗しました</string>
+    <string name="need_token_title">アクセストークンが必要です</string>
+    <string name="need_token_msg">スペースの管理にはパソコン側のグローバルトークン（?k= の後ろ）が必要です。「トークンを入力」から入力して再接続してください。</string>
+    <string name="goto_fill_token">トークンを入力</string>
+    <string name="dlg_browse_title">パソコン上のフォルダを選択</string>
+    <string name="browse_pick">このフォルダを選択</string>
+    <string name="browse_up">上の階層へ</string>
+    <string name="browse_loading">読み込み中…</string>
+    <string name="browse_failed">このフォルダを読み取れません</string>
+    <string name="browse_writable">書き込み可</string>
+    <string name="browse_readonly">読み取り専用</string>
+    <string name="browse_hint">%1$d 個のサブフォルダ · 現在のフォルダは%2$s。タップで開きます</string>
+    <string name="browse_truncated">%1$d 個のサブフォルダ（最大 500 件） · 現在のフォルダは%2$s</string>
+    <string name="browse_dir_rw">%1$s（書き込み可）</string>
+    <string name="browse_dir_ro">%1$s（読み取り専用）</string>
 </resources>

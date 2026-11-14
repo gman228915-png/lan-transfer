@@ -30,6 +30,19 @@ import javax.net.ssl.X509TrustManager
  */
 data class SpaceInfo(val name: String, val mode: String, val description: String)
 
+/** 服务端目录浏览返回的一个子目录（只读，只有名字与是否可写）。 */
+data class DirEntry(val name: String, val writable: Boolean)
+
+/** 服务端目录浏览结果：当前路径、父级、当前目录是否可写、子目录列表。 */
+data class DirListing(
+    val path: String,
+    val parent: String,
+    val writable: Boolean,
+    val truncated: Boolean,
+    val roots: List<String>,
+    val dirs: List<DirEntry>
+)
+
 class ApiClient(baseUrl: String, private val token: String, context: Context) {
 
     companion object {
@@ -155,6 +168,87 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
             lastError = errorText(e)
             Log.e(TAG, "listFiles failed", e)
             return emptyList()
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /**
+     * 浏览电脑上的目录（只读，只列子目录）。path 为空时由服务端返回用户主目录。
+     * 越界 / 不存在等错误会把服务端中文原因放进 lastError。
+     */
+    fun listDirs(path: String? = null): DirListing? {
+        lastError = null
+        pinMismatch = false
+        val extra = if (path.isNullOrBlank()) null
+        else "path=" + URLEncoder.encode(path, "UTF-8")
+        val conn = open(buildUrl("api/fs/dirs", extra))
+        conn.requestMethod = "GET"
+        conn.connectTimeout = 8000
+        conn.readTimeout = 8000
+        try {
+            if (conn.responseCode != 200) {
+                lastError = serverError(conn)
+                return null
+            }
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            val json = JSONObject(body)
+            val arr = json.optJSONArray("dirs") ?: return null
+            val dirs = mutableListOf<DirEntry>()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                dirs.add(DirEntry(o.optString("name", ""), o.optBoolean("writable", false)))
+            }
+            val rootsArray = json.optJSONArray("roots")
+            val roots = mutableListOf<String>()
+            if (rootsArray != null) {
+                for (i in 0 until rootsArray.length()) roots.add(rootsArray.getString(i))
+            }
+            return DirListing(
+                path = json.optString("path", ""),
+                parent = json.optString("parent", ""),
+                writable = json.optBoolean("writable", false),
+                truncated = json.optBoolean("truncated", false),
+                roots = roots,
+                dirs = dirs
+            )
+        } catch (e: Exception) {
+            lastError = errorText(e)
+            Log.e(TAG, "listDirs failed", e)
+            return null
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** 新建分区（需要全局口令）；失败时 lastError 为服务端返回的中文原因。 */
+    fun createSpace(name: String, path: String, mode: String, description: String): Boolean {
+        lastError = null
+        pinMismatch = false
+        val body = JSONObject()
+            .put("name", name.trim())
+            .put("path", path.trim())
+            .put("mode", mode)
+            .put("description", description.trim())
+            .toString()
+        val conn = open(buildUrl("api/spaces"))
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.connectTimeout = 10000
+        conn.readTimeout = 10000
+        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        try {
+            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            if (conn.responseCode != 200) {
+                lastError = serverError(conn)
+                return false
+            }
+            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            return JSONObject(text).optBoolean("ok", false)
+        } catch (e: Exception) {
+            lastError = errorText(e)
+            Log.e(TAG, "createSpace failed", e)
+            return false
         } finally {
             conn.disconnect()
         }
@@ -391,6 +485,23 @@ class ApiClient(baseUrl: String, private val token: String, context: Context) {
     // ------------------------------------------------------------------
     // 错误翻译
     // ------------------------------------------------------------------
+    /** 优先取服务端返回的中文 error 原文，取不到才退回通用文案。 */
+    private fun serverError(conn: HttpURLConnection): String {
+        val raw = try {
+            (conn.errorStream ?: conn.inputStream)?.bufferedReader()?.use { it.readText() }
+        } catch (_: Exception) {
+            null
+        }
+        val message = raw?.let {
+            try {
+                JSONObject(it).optString("error", "")
+            } catch (_: Exception) {
+                ""
+            }
+        }.orEmpty()
+        return message.ifBlank { httpError(conn.responseCode) }
+    }
+
     private fun httpError(code: Int): String = when (code) {
         401, 403 -> "口令错误或已失效，请重新扫描电脑端二维码"
         404 -> "服务器上找不到这个文件"

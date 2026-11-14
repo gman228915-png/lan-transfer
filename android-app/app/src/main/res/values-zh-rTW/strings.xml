@@ -114,4 +114,30 @@
     <string name="html_title">已下載檔案</string>
     <string name="path_copied_text">LanTransfer 下載路徑：%1$s</string>
     <string name="path_copied">路徑已複製</string>
+    <!-- 新建分區（v1.8.1） -->
+    <string name="btn_new_space">＋ 新建分區</string>
+    <string name="dlg_new_space_title">新建分區</string>
+    <string name="hint_space_name">分區名稱（字母、數字、底線、連字號）</string>
+    <string name="hint_space_path">電腦上的資料夾，如 D:\\共享\\media</string>
+    <string name="btn_browse">瀏覽</string>
+    <string name="space_mode_rw">讀寫</string>
+    <string name="space_mode_ro">唯讀</string>
+    <string name="hint_space_desc">描述（選填）</string>
+    <string name="btn_create">建立</string>
+    <string name="space_created">已建立分區「%1$s」</string>
+    <string name="space_create_failed">建立失敗</string>
+    <string name="need_token_title">需要存取口令</string>
+    <string name="need_token_msg">新建分區需要電腦端的全域口令（電腦視窗裡 ?k= 後面的部分）。點「去填寫口令」填好後重新連線。</string>
+    <string name="goto_fill_token">去填寫口令</string>
+    <string name="dlg_browse_title">選擇電腦上的資料夾</string>
+    <string name="browse_pick">選擇此資料夾</string>
+    <string name="browse_up">上一層</string>
+    <string name="browse_loading">載入中…</string>
+    <string name="browse_failed">無法讀取這個資料夾</string>
+    <string name="browse_writable">可寫</string>
+    <string name="browse_readonly">唯讀</string>
+    <string name="browse_hint">%1$d 個子資料夾 · 目前資料夾%2$s，點一項進入</string>
+    <string name="browse_truncated">%1$d 個子資料夾（最多顯示 500 筆） · 目前資料夾%2$s</string>
+    <string name="browse_dir_rw">%1$s（可寫）</string>
+    <string name="browse_dir_ro">%1$s（唯讀）</string>
 </resources>

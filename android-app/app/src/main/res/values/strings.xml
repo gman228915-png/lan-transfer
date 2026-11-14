@@ -123,4 +123,30 @@
     <string name="html_title">Downloaded files</string>
     <string name="path_copied_text">LAN Transfer download path: %1$s</string>
     <string name="path_copied">Path copied</string>
+    <!-- new space (v1.8.1) -->
+    <string name="btn_new_space">＋ New space</string>
+    <string name="dlg_new_space_title">New space</string>
+    <string name="hint_space_name">Space name (letters, digits, _ or -)</string>
+    <string name="hint_space_path">Folder on the computer, e.g. D:\\Shared\\media</string>
+    <string name="btn_browse">Browse</string>
+    <string name="space_mode_rw">Read &amp; write</string>
+    <string name="space_mode_ro">Read-only</string>
+    <string name="hint_space_desc">Description (optional)</string>
+    <string name="btn_create">Create</string>
+    <string name="space_created">Space \"%1$s\" created</string>
+    <string name="space_create_failed">Could not create the space</string>
+    <string name="need_token_title">Access token required</string>
+    <string name="need_token_msg">Managing spaces needs the computer global access token (the part after ?k=, shown in the computer window). Tap \"Enter token\", fill it in and connect again.</string>
+    <string name="goto_fill_token">Enter token</string>
+    <string name="dlg_browse_title">Choose a folder on the computer</string>
+    <string name="browse_pick">Use this folder</string>
+    <string name="browse_up">Up</string>
+    <string name="browse_loading">Loading…</string>
+    <string name="browse_failed">Could not read this folder</string>
+    <string name="browse_writable">writable</string>
+    <string name="browse_readonly">read-only</string>
+    <string name="browse_hint">%1$d subfolders · this folder is %2$s; tap one to open</string>
+    <string name="browse_truncated">%1$d subfolders (limited to 500) · this folder is %2$s</string>
+    <string name="browse_dir_rw">%1$s (writable)</string>
+    <string name="browse_dir_ro">%1$s (read-only)</string>
 </resources>

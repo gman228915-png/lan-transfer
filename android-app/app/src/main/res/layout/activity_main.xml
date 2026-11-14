@@ -229,12 +229,26 @@
 
         <Spinner
             android:id="@+id/spSpace"
-            android:layout_width="132dp"
+            android:layout_width="0dp"
             android:layout_height="36dp"
+            android:layout_weight="1"
             android:layout_marginStart="8dp"
             android:background="#232a44"
             android:paddingHorizontal="6dp"
             android:spinnerMode="dropdown" />
+
+        <Button
+            android:id="@+id/btnNewSpace"
+            style="?attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:layout_marginStart="4dp"
+            android:minWidth="0dp"
+            android:maxLines="1"
+            android:paddingHorizontal="6dp"
+            android:text="@string/btn_new_space"
+            android:textColor="#5b8cff"
+            android:textSize="12sp" />
     </LinearLayout>
 
     <!-- 文件列表 -->

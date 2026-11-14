@@ -114,4 +114,30 @@
     <string name="html_title">Archivos descargados</string>
     <string name="path_copied_text">Ruta de descarga de LanTransfer: %1$s</string>
     <string name="path_copied">Ruta copiada</string>
+    <!-- nueva partición (v1.8.1) -->
+    <string name="btn_new_space">＋ Nueva partición</string>
+    <string name="dlg_new_space_title">Nueva partición</string>
+    <string name="hint_space_name">Nombre (letras, números, _ o -)</string>
+    <string name="hint_space_path">Carpeta del ordenador, p. ej. D:\\Compartido\\media</string>
+    <string name="btn_browse">Examinar</string>
+    <string name="space_mode_rw">Lectura y escritura</string>
+    <string name="space_mode_ro">Solo lectura</string>
+    <string name="hint_space_desc">Descripción (opcional)</string>
+    <string name="btn_create">Crear</string>
+    <string name="space_created">Partición «%1$s» creada</string>
+    <string name="space_create_failed">No se pudo crear la partición</string>
+    <string name="need_token_title">Se necesita el token de acceso</string>
+    <string name="need_token_msg">Gestionar particiones requiere el token global del ordenador (la parte después de ?k=). Pulsa «Introducir token», escríbelo y vuelve a conectar.</string>
+    <string name="goto_fill_token">Introducir token</string>
+    <string name="dlg_browse_title">Elegir una carpeta del ordenador</string>
+    <string name="browse_pick">Usar esta carpeta</string>
+    <string name="browse_up">Subir</string>
+    <string name="browse_loading">Cargando…</string>
+    <string name="browse_failed">No se pudo leer esta carpeta</string>
+    <string name="browse_writable">con escritura</string>
+    <string name="browse_readonly">solo lectura</string>
+    <string name="browse_hint">%1$d subcarpetas · esta carpeta es %2$s; toca una para abrirla</string>
+    <string name="browse_truncated">%1$d subcarpetas (máx. 500) · esta carpeta es %2$s</string>
+    <string name="browse_dir_rw">%1$s (con escritura)</string>
+    <string name="browse_dir_ro">%1$s (solo lectura)</string>
 </resources>

@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <EditText
+            android:id="@+id/etSpaceName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#232a44"
+            android:hint="@string/hint_space_name"
+            android:inputType="text"
+            android:maxLength="40"
+            android:padding="10dp"
+            android:singleLine="true"
+            android:textColor="#eaf0ff"
+            android:textColorHint="#6b7a99"
+            android:textSize="14sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <EditText
+                android:id="@+id/etSpacePath"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="#232a44"
+                android:hint="@string/hint_space_path"
+                android:inputType="textUri"
+                android:padding="10dp"
+                android:singleLine="true"
+                android:textColor="#eaf0ff"
+                android:textColorHint="#6b7a99"
+                android:textSize="14sp" />
+
+            <Button
+                android:id="@+id/btnBrowseSpace"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:minWidth="0dp"
+                android:paddingHorizontal="12dp"
+                android:text="@string/btn_browse"
+                android:textColor="#ffffff"
+                android:textSize="13sp"
+                android:backgroundTint="#5b8cff" />
+        </LinearLayout>
+
+        <RadioGroup
+            android:id="@+id/rgSpaceMode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal">
+
+            <RadioButton
+                android:id="@+id/rbSpaceReadWrite"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:checked="true"
+                android:text="@string/space_mode_rw"
+                android:textColor="#eaf0ff"
+                android:textSize="14sp" />
+
+            <RadioButton
+                android:id="@+id/rbSpaceReadOnly"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/space_mode_ro"
+                android:textColor="#eaf0ff"
+                android:textSize="14sp" />
+        </RadioGroup>
+
+        <EditText
+            android:id="@+id/etSpaceDesc"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="#232a44"
+            android:hint="@string/hint_space_desc"
+            android:inputType="text"
+            android:maxLength="120"
+            android:padding="10dp"
+            android:singleLine="true"
+            android:textColor="#eaf0ff"
+            android:textColorHint="#6b7a99"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/tvSpaceError"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:textColor="#ff7b7b"
+            android:textSize="13sp"
+            android:visibility="gone" />
+    </LinearLayout>
+</ScrollView>

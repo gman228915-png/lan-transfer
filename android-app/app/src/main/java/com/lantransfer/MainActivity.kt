@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
@@ -11,10 +12,17 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.view.inputmethod.InputMethodManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ListView
+import android.widget.RadioGroup
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -145,6 +153,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnDiscover.setOnClickListener { startDiscovery(false) }
         binding.btnOpenDownloads.setOnClickListener { showDownloadOptions() }
         binding.btnAppearance.setOnClickListener { showAppearanceDialog() }
+        binding.btnNewSpace.setOnClickListener { showNewSpaceDialog() }
         applyBackground()
 
         // 记住上次地址与口令；有记录时自动重连
@@ -458,6 +467,186 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, getString(R.string.space_readonly_toast, currentSpace), Toast.LENGTH_SHORT).show()
         }
         if (api != null) refreshFiles()
+    }
+
+    // --------------------------------------------------------------------------- #
+    // 新建分区：目录建在电脑上，手机只把路径发给服务端（不使用 SAF 选手机目录）
+    // --------------------------------------------------------------------------- #
+    private fun showNewSpaceDialog() {
+        if (api == null) {
+            Toast.makeText(this, getString(R.string.err_no_server), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val view = layoutInflater.inflate(R.layout.dialog_new_space, null)
+        val etName = view.findViewById<EditText>(R.id.etSpaceName)
+        val etPath = view.findViewById<EditText>(R.id.etSpacePath)
+        val rgMode = view.findViewById<RadioGroup>(R.id.rgSpaceMode)
+        val etDesc = view.findViewById<EditText>(R.id.etSpaceDesc)
+        val tvError = view.findViewById<TextView>(R.id.tvSpaceError)
+        view.findViewById<Button>(R.id.btnBrowseSpace).setOnClickListener {
+            showBrowseDialog(etPath.text.toString().trim(), etPath)
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.dlg_new_space_title)
+            .setView(view)
+            .setPositiveButton(R.string.btn_create, null)
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val name = etName.text.toString().trim()
+                val path = etPath.text.toString().trim()
+                val mode = if (rgMode.checkedRadioButtonId == R.id.rbSpaceReadOnly) "ro" else "rw"
+                submitNewSpace(dialog, name, path, mode, etDesc.text.toString().trim(), tvError)
+            }
+        }
+        dialog.show()
+    }
+
+    private fun submitNewSpace(dialog: AlertDialog, name: String, path: String,
+                               mode: String, description: String, tvError: TextView) {
+        val api = this.api ?: return
+        val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        positive.isEnabled = false
+        tvError.visibility = View.GONE
+        scope.launch {
+            val ok = api.createSpace(name, path, mode, description)
+            val error = api.lastError
+            withContext(Dispatchers.Main) {
+                positive.isEnabled = true
+                if (ok) {
+                    dialog.dismiss()
+                    Toast.makeText(this@MainActivity,
+                        getString(R.string.space_created, name), Toast.LENGTH_SHORT).show()
+                    currentSpace = name
+                    loadSpaces()
+                } else {
+                    // 服务端的中文原因原样展示（重名 / 系统目录 / 路径是文件 / 保留名等）
+                    val message = error ?: getString(R.string.space_create_failed)
+                    tvError.text = message
+                    tvError.visibility = View.VISIBLE
+                    if (message.contains("口令") || message.contains("unauthorized")) {
+                        showTokenGuide(dialog)
+                    }
+                }
+            }
+        }
+    }
+
+    /** 没有全局口令时：明确提示，并给出填写口令的入口。 */
+    private fun showTokenGuide(formDialog: AlertDialog?) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.need_token_title)
+            .setMessage(R.string.need_token_msg)
+            .setPositiveButton(R.string.goto_fill_token) { guide, _ ->
+                guide.dismiss()
+                formDialog?.dismiss()
+                binding.etToken.requestFocus()
+                val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.showSoftInput(binding.etToken, InputMethodManager.SHOW_IMPLICIT)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    /** 服务端目录浏览器：逐级点进、返回上一级，只显示服务端允许的目录。 */
+    private fun showBrowseDialog(startPath: String, target: EditText) {
+        val api = this.api ?: return
+        val view = layoutInflater.inflate(R.layout.dialog_browse_dirs, null)
+        val tvPath = view.findViewById<TextView>(R.id.tvBrowsePath)
+        val tvHint = view.findViewById<TextView>(R.id.tvBrowseHint)
+        val rootBar = view.findViewById<LinearLayout>(R.id.llBrowseRoots)
+        val listView = view.findViewById<ListView>(R.id.lvBrowseDirs)
+        val entries = mutableListOf<DirEntry>()
+        val labels = mutableListOf<String>()
+        val listAdapter = ArrayAdapter(this, R.layout.item_spinner, labels)
+        listView.adapter = listAdapter
+        var current = ""
+        var parent = ""
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.dlg_browse_title)
+            .setView(view)
+            .setPositiveButton(R.string.browse_pick, null)
+            .setNeutralButton(R.string.browse_up, null)
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+
+        var load: (String) -> Unit = {}
+
+        fun render(listing: DirListing) {
+            current = listing.path
+            parent = listing.parent
+            tvPath.text = listing.path
+            val state = if (listing.writable) getString(R.string.browse_writable)
+            else getString(R.string.browse_readonly)
+            tvHint.text = getString(
+                if (listing.truncated) R.string.browse_truncated else R.string.browse_hint,
+                listing.dirs.size, state)
+            entries.clear()
+            entries.addAll(listing.dirs)
+            labels.clear()
+            for (entry in entries) {
+                labels.add(
+                    if (entry.writable) getString(R.string.browse_dir_rw, entry.name)
+                    else getString(R.string.browse_dir_ro, entry.name))
+            }
+            listAdapter.notifyDataSetChanged()
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).isEnabled = parent.isNotEmpty()
+
+            rootBar.removeAllViews()
+            for (root in listing.roots) {
+                val chip = Button(this)
+                chip.text = root
+                chip.textSize = 12f
+                chip.setTextColor(0xFF5B8CFF.toInt())
+                chip.minWidth = 0
+                chip.minimumWidth = 0
+                chip.setPadding(28, 0, 28, 0)
+                chip.backgroundTintList = ColorStateList.valueOf(0xFF232A44.toInt())
+                chip.setOnClickListener { load(root) }
+                rootBar.addView(chip)
+            }
+        }
+
+        load = { path ->
+            tvHint.text = getString(R.string.browse_loading)
+            scope.launch {
+                val listing = api.listDirs(path)
+                val error = api.lastError
+                withContext(Dispatchers.Main) {
+                    if (listing == null) {
+                        tvHint.text = error ?: getString(R.string.browse_failed)
+                    } else {
+                        render(listing)
+                    }
+                }
+            }
+        }
+
+        listView.setOnItemClickListener { _, _, position, _ ->
+            val entry = entries.getOrNull(position) ?: return@setOnItemClickListener
+            load(joinPath(current, entry.name))
+        }
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                if (current.isNotEmpty()) {
+                    target.setText(current)
+                    dialog.dismiss()
+                }
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                if (parent.isNotEmpty()) load(parent)
+            }
+            load(startPath)
+        }
+        dialog.show()
+    }
+
+    private fun joinPath(parent: String, name: String): String {
+        val sep = if (parent.contains('\\')) "\\" else "/"
+        return parent.trimEnd('\\', '/') + sep + name
     }
 
     private fun refreshFiles() {

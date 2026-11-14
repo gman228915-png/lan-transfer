@@ -114,4 +114,30 @@
     <string name="html_title">다운로드한 파일</string>
     <string name="path_copied_text">LanTransfer 다운로드 경로: %1$s</string>
     <string name="path_copied">경로가 복사되었습니다</string>
+    <!-- 새 파티션 (v1.8.1) -->
+    <string name="btn_new_space">＋ 새 파티션</string>
+    <string name="dlg_new_space_title">새 파티션</string>
+    <string name="hint_space_name">파티션 이름(영문, 숫자, _, -)</string>
+    <string name="hint_space_path">컴퓨터의 폴더 (예: D:\\공유\\media)</string>
+    <string name="btn_browse">찾아보기</string>
+    <string name="space_mode_rw">읽기/쓰기</string>
+    <string name="space_mode_ro">읽기 전용</string>
+    <string name="hint_space_desc">설명(선택)</string>
+    <string name="btn_create">만들기</string>
+    <string name="space_created">\"%1$s\" 파티션을 만들었습니다</string>
+    <string name="space_create_failed">만들지 못했습니다</string>
+    <string name="need_token_title">접근 토큰 필요</string>
+    <string name="need_token_msg">파티션 관리에는 컴퓨터의 전역 토큰(?k= 뒤 부분)이 필요합니다. \"토큰 입력\"을 눌러 입력한 뒤 다시 연결하세요.</string>
+    <string name="goto_fill_token">토큰 입력</string>
+    <string name="dlg_browse_title">컴퓨터의 폴더 선택</string>
+    <string name="browse_pick">이 폴더 선택</string>
+    <string name="browse_up">상위 폴더</string>
+    <string name="browse_loading">불러오는 중…</string>
+    <string name="browse_failed">이 폴더를 읽을 수 없습니다</string>
+    <string name="browse_writable">쓰기 가능</string>
+    <string name="browse_readonly">읽기 전용</string>
+    <string name="browse_hint">하위 폴더 %1$d개 · 현재 폴더는 %2$s, 눌러서 들어가기</string>
+    <string name="browse_truncated">하위 폴더 %1$d개(최대 500개) · 현재 폴더는 %2$s</string>
+    <string name="browse_dir_rw">%1$s(쓰기 가능)</string>
+    <string name="browse_dir_ro">%1$s(읽기 전용)</string>
 </resources>
