@@ -75,7 +75,7 @@
 ```json
 {
   "default": "inbox",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "spaces": [
     {
       "name": "inbox",
@@ -144,6 +144,47 @@
 
 没有全局口令时返回 `403 {"error": "需要全局口令才能管理分区", "code": "unauthorized"}`。
 只读分区的上传仍返回 `403 {"code": "read_only"}`，与 v1.7 一致。
+
+### `GET /api/fs/dirs?path=<绝对路径>`（v1.8.1 新增）
+
+手机端新建分区时用来浏览**电脑上**的文件夹。只读接口：只列子目录，不读文件内容，
+不返回文件列表以外的元数据。需要**全局口令**（与分区管理接口一致）。
+
+- `path` 可省略，省略时返回当前用户主目录。
+- 返回当前路径 `path`、父级 `parent`（盘符根或不可用时为空串）、当前目录是否可写 `writable`、
+  子目录 `dirs`（每项只有 `name` 与 `writable`）、是否被截断 `truncated`、
+  单次上限 `limit`（500）以及可切换的盘符根 `roots`。
+
+```json
+{
+  "path": "C:\\Users\\me\\Desktop",
+  "parent": "C:\\Users\\me",
+  "writable": true,
+  "truncated": false,
+  "limit": 500,
+  "roots": ["C:\\", "D:\\"],
+  "dirs": [
+    {"name": "项目", "writable": true},
+    {"name": "只读资料", "writable": false}
+  ]
+}
+```
+
+安全限制（越界统一返回 `400 {"error": "<中文原因>", "code": "invalid"}`）：
+
+| 限制 | `error` 示例 |
+|---|---|
+| 系统目录及其子目录 | `不允许浏览系统目录：C:\Windows` |
+| 回收站 / 系统保留目录 | `该目录属于回收站或系统保留目录，不允许浏览` |
+| 其他用户的用户目录 | `只允许浏览当前用户目录：C:\Users\me` |
+| 路径不存在 | `路径不存在：C:\not-exist` |
+| 路径不是文件夹 | `该路径不是文件夹：C:\a.txt` |
+
+- 一次最多返回 500 条子目录（按名称排序），超出时 `truncated=true`。
+- 禁止进入 `C:\Windows`、`System32`、`Program Files`、`ProgramData`、`$Recycle.Bin` 等位置，
+  这些目录也不会出现在列表里。
+- 无全局口令返回 `403 {"error": "需要全局口令才能浏览电脑目录", "code": "unauthorized"}`。
+- 盘符根自身允许浏览（用于进入下面的文件夹），但**不能**直接作为分区根目录（见上）。
 
 ## 文件
 
