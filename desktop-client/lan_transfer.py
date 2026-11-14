@@ -38,7 +38,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "lan-transfer"
-APP_VERSION = "1.8.0"
+APP_VERSION = "1.8.1"
 API_VERSION = 1
 
 TOKEN_CHARS = "abcdefghjkmnpqrstuvwxyz23456789"
@@ -590,6 +590,107 @@ def set_default_space(name):
 
 def space_by_name(name):
     return SPACES.get(name)
+
+
+# --------------------------------------------------------------------------- #
+# 目录浏览（手机端新建分区时选电脑上的文件夹；只读，只列目录）
+# --------------------------------------------------------------------------- #
+BROWSE_MAX_ENTRIES = 500
+BROWSE_BLOCKED_NAMES = ("$recycle.bin", "recycler", "system volume information")
+
+
+def _browse_real(path):
+    return os.path.realpath(os.path.abspath(os.path.expanduser(str(path or ""))))
+
+
+def browse_blocked_reason(real_path):
+    """返回不允许浏览的原因（中文）；空字符串表示可浏览。"""
+    parts = [p.lower() for p in re.split(r"[\\/]+", real_path) if p]
+    if any(part in BROWSE_BLOCKED_NAMES for part in parts):
+        return "该目录属于回收站或系统保留目录，不允许浏览"
+    for blocked in _protected_dirs()[0]:
+        if real_path == blocked or real_path.startswith(blocked + os.sep):
+            return "不允许浏览系统目录：%s" % real_path
+    home = _browse_real("~")
+    drive, _rest = os.path.splitdrive(home)
+    users_root = _browse_real(drive + os.sep + "Users") if drive else ""
+    if users_root and (real_path == users_root or real_path.startswith(users_root + os.sep)):
+        if (real_path != users_root and real_path != home
+                and not real_path.startswith(home + os.sep)):
+            return "只允许浏览当前用户目录：%s" % home
+    if os.name != "nt":
+        for blocked in ("/proc", "/sys", "/dev", "/boot"):
+            if real_path == blocked or real_path.startswith(blocked + os.sep):
+                return "不允许浏览系统目录：%s" % real_path
+    return ""
+
+
+def browse_roots():
+    """可切换的浏览根：各盘符根（不存在的盘不返回）。"""
+    if os.name != "nt":
+        return ["/"]
+    roots = []
+    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        root = "%s:\\" % letter
+        if os.path.exists(root):
+            roots.append(root)
+    home = _browse_real("~")
+    if not any(home == root or home.startswith(root) for root in roots):
+        roots.insert(0, home)
+    return roots
+
+
+def list_browse_dirs(raw_path):
+    """列出某个目录下的子目录（只读、只列目录），越界抛 SpaceError。"""
+    home = _browse_real("~")
+    raw = str(raw_path or "").strip()
+    if "\x00" in raw:
+        raise SpaceError("路径包含非法字符")
+    target = _browse_real(raw) if raw else home
+    if target.startswith("\\\\"):
+        raise SpaceError("只允许浏览本机磁盘目录，不支持网络路径：%s" % target)
+    reason = browse_blocked_reason(target)
+    if reason:
+        raise SpaceError(reason)
+    if not os.path.exists(target):
+        raise SpaceError("路径不存在：%s" % target)
+    if not os.path.isdir(target):
+        raise SpaceError("该路径不是文件夹：%s" % target)
+
+    entries = []
+    try:
+        with os.scandir(target) as iterator:
+            for entry in iterator:
+                try:
+                    if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
+                        continue
+                except OSError:
+                    continue
+                child = os.path.realpath(entry.path)
+                if browse_blocked_reason(child):
+                    continue
+                entries.append({"name": entry.name,
+                                "writable": os.access(child, os.W_OK)})
+    except OSError as exc:
+        raise SpaceError("无法读取目录：%s（%s）" % (target, exc))
+
+    entries.sort(key=lambda item: item["name"].lower())
+    truncated = len(entries) > BROWSE_MAX_ENTRIES
+    if truncated:
+        entries = entries[:BROWSE_MAX_ENTRIES]
+
+    parent = os.path.dirname(target)
+    if parent == target or not os.path.isdir(parent) or browse_blocked_reason(parent):
+        parent = ""
+    return {
+        "path": target,
+        "parent": parent,
+        "writable": os.access(target, os.W_OK),
+        "truncated": truncated,
+        "limit": BROWSE_MAX_ENTRIES,
+        "roots": browse_roots(),
+        "dirs": entries,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -1377,6 +1478,14 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
             self._json(self._spaces_payload(token))
             return
 
+        if path == "/api/fs/dirs":
+            if not self._global_token_ok(token):
+                self._json({"error": "需要全局口令才能浏览电脑目录",
+                            "code": "unauthorized"}, 403)
+                return
+            self._browse_dirs(query)
+            return
+
         if path == "/api/files":
             if not self._list_allowed(token, query):
                 return
@@ -1533,6 +1642,13 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
         if space_name:
             return list_files(SPACES[space_name]["path"], space_name)
         return list_all_files()
+
+    def _browse_dirs(self, query):
+        """只读列出电脑上的子目录，供手机端选择分区路径。"""
+        try:
+            self._json(list_browse_dirs(query.get("path", [""])[0]))
+        except SpaceError as exc:
+            self._json({"error": str(exc), "code": "invalid"}, 400)
 
     def _spaces_payload(self, token):
         result = []
@@ -1729,6 +1845,7 @@ h1{font-size:19px;margin:0 0 12px}p{color:#93a0c4;line-height:1.7;font-size:14px
                 "session_persist": True,
                 "upload_limit": UPLOAD_LIMIT,
                 "token_rotate": True,
+                "browse_dirs": True,
             },
         }
 
